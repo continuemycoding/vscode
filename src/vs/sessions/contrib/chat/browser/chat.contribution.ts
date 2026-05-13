@@ -39,6 +39,7 @@ import { AccessibleViewRegistry } from '../../../../platform/accessibility/brows
 import { SessionsChatAccessibilityHelp } from './sessionsChatAccessibilityHelp.js';
 import { SessionsOpenerParticipantContribution } from './sessionsOpenerParticipant.js';
 import '../../sessions/browser/mobile/mobileOverlayContribution.js';
+import './agentHost/agentHostSessionConfigPicker.contribution.js';
 
 
 class NewChatInSessionsWindowAction extends Action2 {
