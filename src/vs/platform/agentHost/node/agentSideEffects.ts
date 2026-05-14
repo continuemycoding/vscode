@@ -14,17 +14,21 @@ import { IInstantiationService } from '../../instantiation/common/instantiation.
 import { ILogService } from '../../log/common/log.js';
 import { AgentSignal, IAgent, IAgentToolPendingConfirmationSignal } from '../common/agentService.js';
 import { IDiffComputeService } from '../common/diffComputeService.js';
+import { SESSION_CHANGESET_ID, sessionChangesetLabel } from '../common/changesetUri.js';
 import { ISessionDatabase, ISessionDataService } from '../common/sessionDataService.js';
 import type { AgentInfo } from '../common/state/protocol/state.js';
 import { ActionType, isSessionAction, StateAction, type SessionToolCallCompleteAction } from '../common/state/sessionActions.js';
 import {
 	buildSubagentSessionUri,
+	ChangesetStatus,
 	getToolFileEdits,
 	PendingMessageKind,
 	ResponsePartKind,
 	SessionStatus,
 	ToolCallStatus,
 	ToolResultContentType,
+	type ChangesetFile,
+	type ChangesetSummary,
 	type ISessionFileDiff,
 	type URI as ProtocolURI,
 	type SessionState,
@@ -611,6 +615,7 @@ export class AgentSideEffects extends Disposable {
 		const toRemove: string[] = [];
 		for (const [key, subagentUri] of this._subagentSessions) {
 			if (key.startsWith(`${parentSession}:`)) {
+				this._stateManager.disposeSessionChangesets(subagentUri);
 				this._stateManager.removeSession(subagentUri);
 				toRemove.push(key);
 			}
@@ -623,6 +628,7 @@ export class AgentSideEffects extends Disposable {
 		// but not tracked (e.g. restored sessions)
 		const prefix = `${parentSession}/subagent/`;
 		for (const uri of this._stateManager.getSessionUrisWithPrefix(prefix)) {
+			this._stateManager.disposeSessionChangesets(uri);
 			this._stateManager.removeSession(uri);
 		}
 
@@ -957,6 +963,61 @@ export class AgentSideEffects extends Disposable {
 	// ---- Session diff computation ----------------------------------------------
 
 	/**
+	 * Eagerly publishes the default `session` changeset on `summary.changesets`
+	 * for a top-level session. Called at session-ready and session-restore time
+	 * so that:
+	 * - `listSessions` and {@link NotificationType.SessionSummaryChanged}
+	 *   surface the catalogue entry from the moment a client first sees the
+	 *   session — clients never have to wait for a turn to complete to render
+	 *   the diff chip or to subscribe to the changeset URI.
+	 * - The changeset URI is registered (with `status: computing`) so an
+	 *   immediate client subscription succeeds and receives the
+	 *   {@link ChangesetStatus.Ready} transition once the first compute runs.
+	 *
+	 * Idempotent: safe to call multiple times for the same session and safe
+	 * to call alongside the lazy publish path inside
+	 * {@link _doComputeSessionDiffs}. Subagent sessions are never given a
+	 * default catalogue entry — the diff producer doesn't run for them.
+	 */
+	publishSessionChangesetCatalogue(session: ProtocolURI): void {
+		const changesetUri = this._stateManager.registerChangeset(session, SESSION_CHANGESET_ID);
+		this._ensureSessionChangesetCatalogue(session, changesetUri);
+	}
+
+	/**
+	 * Re-seed the `session` changeset from a previously persisted file
+	 * list (e.g. read out of the session DB on restore / listSessions).
+	 * Idempotently registers the changeset URI on the state manager,
+	 * fans the persisted files out as `changeset/fileSet` actions, and
+	 * transitions the status to `Ready`.
+	 *
+	 * Critically, this works even when the parent session has not been
+	 * registered with the state manager yet — the session-list chips
+	 * (which open a per-session changeset subscription on every visible
+	 * session, including unopened ones) need the server to have the
+	 * state seeded so the subscription returns the persisted files
+	 * instead of an empty snapshot.
+	 *
+	 * The catalogue's aggregate `additions` / `deletions` / `files`
+	 * counts on `summary.changesets[i]` are only refreshed when a
+	 * session state actually exists; for unopened sessions the chip
+	 * reads counts off the synthesised `meta.changesets` returned by
+	 * `agentService.listSessions` instead.
+	 */
+	restoreSessionChangeset(session: ProtocolURI, diffs: readonly ISessionFileDiff[]): void {
+		const changesetUri = this._stateManager.registerChangeset(session, SESSION_CHANGESET_ID);
+		// Only attempt to publish the catalogue summary entry when the
+		// session state exists — the catalogue lives on `summary.changesets`,
+		// which the state manager only tracks per-session. For unopened
+		// sessions the synthesised entry on the metadata return value
+		// covers this.
+		if (this._stateManager.getSessionState(session)) {
+			this._ensureSessionChangesetCatalogue(session, changesetUri);
+		}
+		this._publishChangesetDiffs(session, changesetUri, diffs);
+	}
+
+	/**
 	 * Schedules a debounced diff computation for a session. If a timer is
 	 * already pending for this session, it is replaced (restarting the delay).
 	 * The computation fires after {@link _DIFF_DEBOUNCE_MS} unless cancelled
@@ -979,10 +1040,13 @@ export class AgentSideEffects extends Disposable {
 	}
 
 	/**
-	 * Asynchronously (re)computes aggregated diff statistics for a session
-	 * and dispatches {@link ActionType.SessionDiffsChanged} to update the
-	 * session summary. Fire-and-forget: errors are logged but do not fail
-	 * the turn.
+	 * Asynchronously (re)computes the file list for the session-wide
+	 * changeset and feeds the deltas through the
+	 * {@link AgentHostStateManager}'s changeset action stream so subscribers
+	 * receive {@link ActionType.ChangesetFileSet} /
+	 * {@link ActionType.ChangesetFileRemoved} actions.
+	 *
+	 * Fire-and-forget: errors are logged but do not fail the turn.
 	 */
 	private _computeSessionDiffs(session: ProtocolURI, changedTurnId?: string): void {
 		// Chain onto any pending computation for this session to ensure
@@ -998,6 +1062,8 @@ export class AgentSideEffects extends Disposable {
 			this._logService.warn(`[AgentSideEffects] Failed to open session database for diff computation: ${session}`, err);
 			return;
 		}
+		const changesetUri = this._stateManager.registerChangeset(session, SESSION_CHANGESET_ID);
+		this._ensureSessionChangesetCatalogue(session, changesetUri);
 		try {
 			// Prefer a git-driven diff so terminal-driven file changes show up
 			// alongside SDK-tracked tool edits. The git path is the source of
@@ -1010,28 +1076,139 @@ export class AgentSideEffects extends Disposable {
 				// Build incremental options when a specific turn triggered the recomputation
 				let incremental: IIncrementalDiffOptions | undefined;
 				if (changedTurnId) {
-					const previousDiffs = this._stateManager.getSessionState(session)?.summary.diffs;
+					const previousDiffs = this._readPreviousChangesetDiffs(changesetUri);
 					if (previousDiffs) {
-						incremental = { changedTurnId, previousDiffs };
+						incremental = { changedTurnId, previousDiffs: [...previousDiffs] };
 					}
 				}
 				diffs = await computeSessionDiffs(session, ref.object, this._diffComputeService, incremental);
 			}
 
-			this._stateManager.dispatchServerAction({
-				type: ActionType.SessionDiffsChanged,
-				session,
-				diffs: [...diffs],
-			});
-			// Persist diffs to the session database so they survive restarts
-			ref.object.setMetadata('diffs', JSON.stringify(diffs)).catch(err => {
-				this._logService.warn('[AgentSideEffects] Failed to persist session diffs', err);
-			});
+			this._publishChangesetDiffs(session, changesetUri, diffs);
+			// Persist the file list under the legacy `'diffs'` key so a
+			// subsequent `listSessions` / `restoreSession` can reseed the
+			// changeset before the first post-restart compute completes.
+			// Fire-and-forget; `_persistSessionFlag` already serialises
+			// through the metadata sequencer.
+			this._persistSessionFlag(session, 'diffs', JSON.stringify(diffs));
 		} catch (err) {
 			this._logService.warn('[AgentSideEffects] Failed to compute session diffs', err);
+			this._stateManager.dispatchServerAction({
+				type: ActionType.ChangesetStatusChanged,
+				changeset: changesetUri,
+				status: ChangesetStatus.Error,
+				error: { errorType: 'computeFailed', message: err instanceof Error ? err.message : String(err) },
+			});
 		} finally {
 			ref.dispose();
 		}
+	}
+
+	/**
+	 * Idempotently publishes the session changeset's catalogue entry on
+	 * `summary.changesets`. Aggregate counts are refreshed by
+	 * {@link _publishChangesetDiffs} after each compute pass.
+	 */
+	private _ensureSessionChangesetCatalogue(session: ProtocolURI, changesetUri: ProtocolURI): void {
+		const sessionState = this._stateManager.getSessionState(session);
+		if (!sessionState) {
+			return;
+		}
+		const existing = sessionState.summary.changesets ?? [];
+		if (existing.some(c => c.id === SESSION_CHANGESET_ID)) {
+			return;
+		}
+		const entry: ChangesetSummary = {
+			id: SESSION_CHANGESET_ID,
+			label: sessionChangesetLabel(),
+			uriTemplate: changesetUri,
+		};
+		this._stateManager.setSessionChangesets(session, [...existing, entry]);
+	}
+
+	/**
+	 * Reads the previous diff list back out of the changeset state so the
+	 * incremental aggregator can avoid recomputing files that haven't
+	 * changed.
+	 */
+	private _readPreviousChangesetDiffs(changesetUri: ProtocolURI): readonly ISessionFileDiff[] | undefined {
+		const state = this._stateManager.getChangesetState(changesetUri);
+		if (!state || state.files.length === 0) {
+			return undefined;
+		}
+		return state.files.map(f => f.edit);
+	}
+
+	/**
+	 * Translates the new file list into a sequence of changeset/* actions
+	 * (fileSet, fileRemoved) and updates the catalogue counts via
+	 * {@link AgentHostStateManager.setSessionChangesets}.
+	 */
+	private _publishChangesetDiffs(session: ProtocolURI, changesetUri: ProtocolURI, diffs: readonly ISessionFileDiff[]): void {
+		const previous = this._stateManager.getChangesetState(changesetUri);
+		const previousIds = new Set<string>(previous?.files.map(f => f.id) ?? []);
+
+		// Emit file upserts. Use `after.uri` as the stable id when available
+		// (covers creates and edits) and fall back to `before.uri` for
+		// deletions; this matches the spec's recommendation and avoids id
+		// collisions for renames (which carry distinct before/after URIs).
+		const nextFilesById = new Map<string, ISessionFileDiff>();
+		for (const edit of diffs) {
+			const id = edit.after?.uri ?? edit.before?.uri;
+			if (!id) {
+				continue;
+			}
+			nextFilesById.set(id, edit);
+			const file: ChangesetFile = { id, edit };
+			this._stateManager.dispatchServerAction({
+				type: ActionType.ChangesetFileSet,
+				changeset: changesetUri,
+				file,
+			});
+		}
+
+		// Emit removals for any file that disappeared in this pass.
+		for (const id of previousIds) {
+			if (!nextFilesById.has(id)) {
+				this._stateManager.dispatchServerAction({
+					type: ActionType.ChangesetFileRemoved,
+					changeset: changesetUri,
+					fileId: id,
+				});
+			}
+		}
+
+		// Move the changeset out of `computing` (or out of an earlier error)
+		// now that we have a fresh, complete file list.
+		const status = this._stateManager.getChangesetState(changesetUri)?.status;
+		if (status !== ChangesetStatus.Ready) {
+			this._stateManager.dispatchServerAction({
+				type: ActionType.ChangesetStatusChanged,
+				changeset: changesetUri,
+				status: ChangesetStatus.Ready,
+			});
+		}
+
+		// Refresh the catalogue's aggregate counts so chip rendering stays
+		// in sync without subscribers having to attach to the changeset.
+		const sessionState = this._stateManager.getSessionState(session);
+		if (!sessionState) {
+			return;
+		}
+		const totals = Array.from(nextFilesById.values()).reduce(
+			(acc, d) => {
+				acc.additions += d.diff?.added ?? 0;
+				acc.deletions += d.diff?.removed ?? 0;
+				return acc;
+			},
+			{ additions: 0, deletions: 0 },
+		);
+		const existing = sessionState.summary.changesets ?? [];
+		const next = existing.map(c => c.id === SESSION_CHANGESET_ID
+			? { ...c, additions: totals.additions, deletions: totals.deletions, files: nextFilesById.size }
+			: c,
+		);
+		this._stateManager.setSessionChangesets(session, next);
 	}
 
 	/**

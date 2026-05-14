@@ -20,9 +20,10 @@ import { AgentSession, IAgentConnection, IAgentSessionMetadata } from '../../../
 import { KNOWN_AUTO_APPROVE_VALUES, SessionConfigKey } from '../../../../../platform/agentHost/common/sessionConfigKeys.js';
 import { ResolveSessionConfigResult } from '../../../../../platform/agentHost/common/state/protocol/commands.js';
 import { NotificationType } from '../../../../../platform/agentHost/common/state/protocol/notifications.js';
-import { FileEdit, ModelSelection, SessionStatus as ProtocolSessionStatus, RootConfigState, RootState, SessionState, SessionSummary } from '../../../../../platform/agentHost/common/state/protocol/state.js';
+import { ModelSelection, SessionStatus as ProtocolSessionStatus, RootConfigState, RootState, SessionState, SessionSummary, type ChangesetState } from '../../../../../platform/agentHost/common/state/protocol/state.js';
 import { ActionType, isSessionAction } from '../../../../../platform/agentHost/common/state/sessionActions.js';
 import { readSessionGitState, SessionMeta, StateComponents, type ISessionGitState } from '../../../../../platform/agentHost/common/state/sessionState.js';
+import { buildChangesetUri, SESSION_CHANGESET_ID } from '../../../../../platform/agentHost/common/changesetUri.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { ChatViewPaneTarget, IChatWidgetService } from '../../../../../workbench/contrib/chat/browser/chat.js';
@@ -37,7 +38,7 @@ import { IChat, IGitHubInfo, ISession, ISessionChangeset, ISessionType, ISession
 import { ISendRequestOptions, ISessionChangeEvent } from '../../../../services/sessions/common/sessionsProvider.js';
 import { computePullRequestIcon } from '../../../github/common/types.js';
 import { IGitHubService } from '../../../github/browser/githubService.js';
-import { diffsEqual, diffsToChanges, mapProtocolStatus } from './agentHostDiffs.js';
+import { changesetFilesEqual, changesetFilesToChanges, mapProtocolStatus } from './agentHostDiffs.js';
 
 // ============================================================================
 // AgentHostSessionAdapter — shared adapter for local and remote sessions
@@ -231,9 +232,14 @@ export class AgentHostSessionAdapter implements ISession {
 		if (metadata.isArchived) {
 			this.isArchived.set(true, undefined);
 		}
-		if (metadata.diffs && metadata.diffs.length > 0) {
-			this.changes.set(diffsToChanges(metadata.diffs, _options.mapDiffUri), undefined);
-		}
+		// File-change rendering: the catalogue entry on
+		// `metadata.changesets` carries only aggregate counts. The full
+		// per-file list flows through a separate `ChangesetState`
+		// subscription, which the provider opens via
+		// `_ensureChangesetSubscription` whenever a session is added or
+		// updated. `this.changes` is populated from that subscription as
+		// `ChangesetState.files` updates arrive, so it starts empty here
+		// and fills in as soon as the first snapshot is delivered.
 
 		const checkpoints = observableValue(this, undefined);
 
@@ -320,10 +326,9 @@ export class AgentHostSessionAdapter implements ISession {
 				didChange = true;
 			}
 
-			if (metadata.diffs && !diffsEqual(this.changes.get(), metadata.diffs, this._options.mapDiffUri)) {
-				this.changes.set(diffsToChanges(metadata.diffs, this._options.mapDiffUri), tx);
-				didChange = true;
-			}
+			// `metadata.changesets` (catalogue) flows through here for chip
+			// counts but the full file list still requires subscribing to
+			// the per-changeset URI; see comment in the constructor.
 
 			if (this._activity.get() !== metadata.activity) {
 				this._activity.set(metadata.activity, tx);
@@ -776,6 +781,23 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 	 * refcount to the agent host.
 	 */
 	private readonly _sessionStateIdleTimers = this._register(new DisposableMap<string, IDisposable>());
+
+	/**
+	 * Per-session subscription to the session-wide changeset URI
+	 * (`<sessionUri>/changeset/session`). The producer in
+	 * `agentSideEffects.ts` publishes file-change deltas through that URI's
+	 * `changeset/*` action stream, and we pipe each `ChangesetState.files`
+	 * snapshot into the adapter's `changes` observable so the file-edit
+	 * chips and the per-session changes view stay in sync without anyone
+	 * having to opt-in.
+	 *
+	 * The wire subscription is reference-counted by
+	 * {@link IAgentConnection.getSubscription}, so multiple consumers can
+	 * share a single underlying server subscription.
+	 *
+	 * Keyed by raw session id (matches {@link _sessionCache}).
+	 */
+	private readonly _changesetSubscriptions = this._register(new DisposableMap<string, IDisposable>());
 
 	protected _cacheInitialized = false;
 
@@ -1546,6 +1568,61 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 	}
 
 	/**
+	 * Eagerly open a subscription to `<sessionUri>/changeset/session` for
+	 * the cached adapter under `rawId`. The producer in
+	 * `agentSideEffects.ts` publishes the session-wide file list through
+	 * that URI's `changeset/*` action stream; this helper pipes each
+	 * `ChangesetState.files` snapshot into the adapter's `changes`
+	 * observable so the file-edit chips and per-session changes view
+	 * stay in sync without any user interaction.
+	 *
+	 * Unlike {@link _ensureSessionStateSubscription}, this subscription
+	 * stays open for the lifetime of the cached adapter — disposing on
+	 * cache eviction. The wire subscription is reference-counted by
+	 * {@link IAgentConnection.getSubscription} so multiple consumers
+	 * coexist without redundant server work.
+	 *
+	 * No-op when:
+	 * - the connection is not available,
+	 * - we already have a subscription for `rawId`,
+	 * - the adapter is no longer in the cache.
+	 */
+	protected _ensureChangesetSubscription(rawId: string): void {
+		if (this._changesetSubscriptions.has(rawId)) {
+			return;
+		}
+		const connection = this.connection;
+		if (!connection) {
+			return;
+		}
+		const cached = this._sessionCache.get(rawId);
+		if (!cached) {
+			return;
+		}
+		const sessionUri = AgentSession.uri(cached.agentProvider, rawId);
+		const changesetUri = buildChangesetUri(sessionUri.toString(), SESSION_CHANGESET_ID);
+		const ref = connection.getSubscription(StateComponents.Changeset, URI.parse(changesetUri));
+		const store = new DisposableStore();
+		store.add(ref);
+		const apply = (state: ChangesetState | Error | undefined): void => {
+			if (!state || state instanceof Error) {
+				return;
+			}
+			const mapUri = this._diffUriMapper();
+			if (changesetFilesEqual(cached.changes.get(), state.files, mapUri)) {
+				return;
+			}
+			cached.changes.set(changesetFilesToChanges(state.files, mapUri), undefined);
+			this._onDidChangeSessions.fire({ added: [], removed: [], changed: [cached] });
+		};
+		store.add(ref.object.onDidChange(state => apply(state as ChangesetState)));
+		this._changesetSubscriptions.set(rawId, store);
+		// If the snapshot already arrived synchronously, render it now so
+		// chips don't blink empty for one frame.
+		apply(ref.object.value as ChangesetState | Error | undefined);
+	}
+
+	/**
 	 * Fan-out for AHP `SessionState` snapshots: keeps both the running
 	 * session config and the cached adapter's `_meta` (e.g. git state) in
 	 * sync.
@@ -1630,6 +1707,10 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 					const cached = this.createAdapter(meta);
 					this._sessionCache.set(rawId, cached);
 					added.push(cached);
+					// Open the per-session changeset subscription so the
+					// "+N -M" / file-list chips populate without waiting
+					// for the user to open the session detail view.
+					this._ensureChangesetSubscription(rawId);
 				}
 			}
 
@@ -1638,6 +1719,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 				if (!currentKeys.has(key)) {
 					this._sessionCache.delete(key);
 					this._runningSessionConfigs.delete(cached.sessionId);
+					this._changesetSubscriptions.deleteAndDispose(key);
 					removed.push(cached);
 				}
 			}
@@ -1707,9 +1789,12 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 				this._handleIsArchivedChanged(e.action.session, e.action.isArchived);
 			} else if (e.action.type === ActionType.SessionConfigChanged && isSessionAction(e.action)) {
 				this._handleConfigChanged(e.action.session, e.action.config, e.action.replace === true);
-			} else if (e.action.type === ActionType.SessionDiffsChanged && isSessionAction(e.action)) {
-				this._handleDiffsChanged(e.action.session, e.action.diffs);
 			}
+			// `changeset/*` actions intentionally do not flow into the
+			// session adapter through this fan-out: per-changeset state is
+			// delivered via a dedicated `ChangesetState` subscription that
+			// `_ensureChangesetSubscription` opens for each expanded
+			// changeset URI when sessions are added or updated.
 		}));
 	}
 
@@ -1737,6 +1822,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 		};
 		const cached = this.createAdapter(meta);
 		this._sessionCache.set(rawId, cached);
+		this._ensureChangesetSubscription(rawId);
 		this._onDidChangeSessions.fire({ added: [cached], removed: [], changed: [] });
 	}
 
@@ -1748,6 +1834,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 			this._runningSessionConfigs.delete(cached.sessionId);
 			this._sessionStateIdleTimers.deleteAndDispose(cached.sessionId);
 			this._sessionStateSubscriptions.deleteAndDispose(cached.sessionId);
+			this._changesetSubscriptions.deleteAndDispose(rawId);
 			this._onDidChangeSessions.fire({ added: [], removed: [cached], changed: [] });
 		}
 	}
@@ -1783,15 +1870,6 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 		}
 	}
 
-	private _handleDiffsChanged(session: string, diffs: FileEdit[]): void {
-		const rawId = AgentSession.id(session);
-		const cached = this._sessionCache.get(rawId);
-		if (cached) {
-			cached.changes.set(diffsToChanges(diffs, this._diffUriMapper()), undefined);
-			this._onDidChangeSessions.fire({ added: [], removed: [], changed: [cached] });
-		}
-	}
-
 	private _handleSessionSummaryChanged(session: string, changes: Partial<SessionSummary>): void {
 		const rawId = AgentSession.id(session);
 		const cached = this._sessionCache.get(rawId);
@@ -1820,13 +1898,9 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 			didChange = true;
 		}
 
-		if (changes.diffs !== undefined) {
-			const mapUri = this._diffUriMapper();
-			if (!diffsEqual(cached.changes.get(), changes.diffs, mapUri)) {
-				cached.changes.set(diffsToChanges(changes.diffs, mapUri), undefined);
-				didChange = true;
-			}
-		}
+		// `changes.changesets` updates carry only the catalogue (counts +
+		// URI templates); they do not include per-file detail. Adapters
+		// pick that up from a dedicated `ChangesetState` subscription.
 
 		if (Object.prototype.hasOwnProperty.call(changes, 'activity') && cached.setActivity(changes.activity)) {
 			didChange = true;

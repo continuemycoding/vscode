@@ -26,8 +26,7 @@ import { join } from '../../../../../base/common/path.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { SubscribeResult } from '../../../common/state/protocol/commands.js';
 import { PROTOCOL_VERSION } from '../../../common/state/protocol/version/registry.js';
-import type { SessionState } from '../../../common/state/sessionState.js';
-import type { SessionDiffsChangedAction, SessionToolCallReadyAction } from '../../../common/state/sessionActions.js';
+import type { ChangesetFileSetAction, SessionToolCallReadyAction } from '../../../common/state/sessionActions.js';
 import {
 	getActionEnvelope,
 	IServerHandle,
@@ -84,7 +83,7 @@ function resolveGitHubToken(): string {
 		tempDirs.length = 0;
 	});
 
-	test('terminal-driven file edit shows up in summary.diffs (no ToolResultFileEditContent emitted)', async function () {
+	test('terminal-driven file edit shows up in the session changeset (no ToolResultFileEditContent emitted)', async function () {
 		this.timeout(180_000);
 
 		// Initialize a tmp git repo as the working directory.
@@ -113,6 +112,11 @@ function resolveGitHubToken(): string {
 		createdSessions.push(realSessionUri);
 
 		await client.call<SubscribeResult>('subscribe', { resource: realSessionUri });
+		// Also subscribe to the session changeset URI: `changeset/*` envelopes
+		// are scoped to the changeset URI by `_isRelevantToClient`, so a
+		// session-only subscription will not receive them.
+		const sessionChangesetUri = `${realSessionUri}/changeset/session`;
+		await client.call<SubscribeResult>('subscribe', { resource: sessionChangesetUri });
 		client.clearReceived();
 
 		// Approve any tool call the agent issues. Restricted to `bash`-style
@@ -166,22 +170,27 @@ function resolveGitHubToken(): string {
 		const files = readdirSync(tempDir);
 		assert.ok(files.includes('from-bash.txt'), `agent did not write the requested file. dir contents: ${files.join(', ')}`);
 
-		// The diff broadcast may have already arrived during the turn — accept
-		// any matching one received during the run, or look at the final state.
+		// The changeset broadcast may have already arrived during the turn —
+		// accept any matching one received during the run, or look at the
+		// final snapshot.
 		const targetUri = URI.file(targetFile).toString();
-		const diffNotifs = client.receivedNotifications(n => isActionNotification(n, 'session/diffsChanged'));
-		const sawInLive = diffNotifs.some(n => {
-			const a = getActionEnvelope(n).action as SessionDiffsChangedAction;
-			return a.diffs.some(d => d.after?.uri === targetUri || d.before?.uri === targetUri);
+		const fileSetNotifs = client.receivedNotifications(n => isActionNotification(n, 'changeset/fileSet'));
+		const sawInLive = fileSetNotifs.some(n => {
+			const a = getActionEnvelope(n).action as ChangesetFileSetAction;
+			const u = a.file.edit.after?.uri ?? a.file.edit.before?.uri;
+			return u === targetUri;
 		});
 
 		if (!sawInLive) {
-			// Fall back to the final snapshot.
-			const result = await client.call<SubscribeResult>('subscribe', { resource: realSessionUri });
-			const state = result.snapshot.state as SessionState;
-			const diffs = state.summary.diffs ?? [];
-			const matching = diffs.find(d => d.after?.uri === targetUri || d.before?.uri === targetUri);
-			assert.ok(matching, `expected git-driven diff for ${targetUri}; live notifications=${diffNotifs.length}; snapshot diffs=${JSON.stringify(diffs.map(d => d.after?.uri ?? d.before?.uri))}`);
+			// Fall back to subscribing to the session changeset URI and
+			// inspecting its snapshot.
+			const result = await client.call<SubscribeResult>('subscribe', { resource: sessionChangesetUri });
+			const state = result.snapshot.state as { files: Array<{ edit: { after?: { uri: string }; before?: { uri: string } } }> };
+			const matching = state.files.find(f => {
+				const u = f.edit.after?.uri ?? f.edit.before?.uri;
+				return u === targetUri;
+			});
+			assert.ok(matching, `expected git-driven changeset entry for ${targetUri}; live notifications=${fileSetNotifs.length}; snapshot files=${JSON.stringify(state.files.map(f => f.edit.after?.uri ?? f.edit.before?.uri))}`);
 		}
 	});
 });
