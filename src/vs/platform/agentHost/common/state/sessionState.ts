@@ -113,7 +113,6 @@ export {
 	type ChangesetOperationTarget,
 	type ChangesetOperationFollowUp,
 	ChangesetOperationTargetKind,
-	ChangesetOperationFollowUpKind,
 } from './protocol/commands.js';
 
 // ---- File edit kind ---------------------------------------------------------

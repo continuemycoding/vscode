@@ -22,7 +22,7 @@ import { ServiceCollection } from '../../instantiation/common/serviceCollection.
 import { ILogService } from '../../log/common/log.js';
 import { AgentProvider, AgentSession, IAgent, IAgentCreateSessionConfig, IAgentMaterializeSessionEvent, IAgentResolveSessionConfigParams, IAgentService, IAgentSessionConfigCompletionsParams, IAgentSessionMetadata, AuthenticateParams, AuthenticateResult } from '../common/agentService.js';
 import { ISessionDataService, SESSION_ATTACHMENTS_DIRNAME } from '../common/sessionDataService.js';
-import { buildChangesetUri, parseChangesetUri, SESSION_CHANGESET_ID, sessionChangesetLabel } from '../common/changesetUri.js';
+import { buildSessionChangesetUri, parseChangesetUri, sessionChangesetLabel } from '../common/changesetUri.js';
 import { ActionType, ActionEnvelope, INotification, type IRootConfigChangedAction, type SessionAction, type TerminalAction } from '../common/state/sessionActions.js';
 import type { CompletionsParams, CompletionsResult, CreateTerminalParams, ResolveSessionConfigResult, SessionConfigCompletionsResult } from '../common/state/protocol/commands.js';
 import { AhpErrorCodes, AHP_SESSION_NOT_FOUND, ContentEncoding, JSON_RPC_INTERNAL_ERROR, ProtocolError, type DirectoryEntry, type ResourceCopyParams, type ResourceCopyResult, type ResourceDeleteParams, type ResourceDeleteResult, type ResourceListResult, type ResourceMoveParams, type ResourceMoveResult, type ResourceReadResult, type ResourceWriteParams, type ResourceWriteResult, type IStateSnapshot } from '../common/state/sessionProtocol.js';
@@ -67,9 +67,8 @@ function synthesizeSessionChangesetCatalogue(sessionUri: string, diffs: readonly
 		deletions += d.diff?.removed ?? 0;
 	}
 	return {
-		id: SESSION_CHANGESET_ID,
 		label: sessionChangesetLabel(),
-		uriTemplate: buildChangesetUri(sessionUri, SESSION_CHANGESET_ID),
+		uriTemplate: buildSessionChangesetUri(sessionUri),
 		additions,
 		deletions,
 		files: diffs.length,
@@ -284,7 +283,7 @@ export class AgentService extends Disposable implements IAgentService {
 					// retrieving / parsing the potentially-large blob.
 					const sessionStr = s.session.toString();
 					const liveSessionState = this._stateManager.getSessionState(sessionStr);
-					const changesetUri = buildChangesetUri(sessionStr, SESSION_CHANGESET_ID);
+					const changesetUri = buildSessionChangesetUri(sessionStr);
 					const liveChangesetState = this._stateManager.getChangesetState(changesetUri);
 					const liveChangesetCatalogue = liveChangesetState?.status === ChangesetStatus.Ready
 						? synthesizeSessionChangesetCatalogueFromState(sessionStr, liveChangesetState)

@@ -23,7 +23,7 @@ import { NotificationType } from '../../../../../platform/agentHost/common/state
 import { ModelSelection, SessionStatus as ProtocolSessionStatus, RootConfigState, RootState, SessionState, SessionSummary, type ChangesetState } from '../../../../../platform/agentHost/common/state/protocol/state.js';
 import { ActionType, isSessionAction } from '../../../../../platform/agentHost/common/state/sessionActions.js';
 import { readSessionGitState, SessionMeta, StateComponents, type ISessionGitState } from '../../../../../platform/agentHost/common/state/sessionState.js';
-import { buildChangesetUri, SESSION_CHANGESET_ID } from '../../../../../platform/agentHost/common/changesetUri.js';
+import { buildSessionChangesetUri } from '../../../../../platform/agentHost/common/changesetUri.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { ChatViewPaneTarget, IChatWidgetService } from '../../../../../workbench/contrib/chat/browser/chat.js';
@@ -1600,7 +1600,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 			return;
 		}
 		const sessionUri = AgentSession.uri(cached.agentProvider, rawId);
-		const changesetUri = buildChangesetUri(sessionUri.toString(), SESSION_CHANGESET_ID);
+		const changesetUri = buildSessionChangesetUri(sessionUri.toString());
 		const ref = connection.getSubscription(StateComponents.Changeset, URI.parse(changesetUri));
 		const store = new DisposableStore();
 		store.add(ref);

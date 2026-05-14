@@ -344,7 +344,7 @@ suite('ProtocolServerHandler', () => {
 		const changesetUri = `${sessionUri}/changeset/session`;
 		stateManager.createSession(makeSessionSummary());
 		stateManager.dispatchServerAction({ type: ActionType.SessionReady, session: sessionUri });
-		stateManager.registerChangeset(sessionUri, 'session');
+		stateManager.registerChangeset(changesetUri);
 
 		const transportA = connectClient('client-a-cs', [changesetUri]);
 		// Session-only subscriber: must NOT receive changeset envelopes.
@@ -381,7 +381,7 @@ suite('ProtocolServerHandler', () => {
 		const changesetUri = `${sessionUri}/changeset/session`;
 		stateManager.createSession(makeSessionSummary());
 		stateManager.dispatchServerAction({ type: ActionType.SessionReady, session: sessionUri });
-		stateManager.registerChangeset(sessionUri, 'session');
+		stateManager.registerChangeset(changesetUri);
 
 		const transport = connectClient('client-clear', [changesetUri]);
 		transport.sent.length = 0;
@@ -457,7 +457,6 @@ suite('ProtocolServerHandler', () => {
 			summary: 'Session With Changesets',
 			changesets: [
 				{
-					id: 'session',
 					label: 'Session Changes',
 					uriTemplate: `${sessionUri}/changeset/session`,
 					additions: 5,
@@ -477,7 +476,6 @@ suite('ProtocolServerHandler', () => {
 		const result = (resp as unknown as { result: ListSessionsResult }).result;
 		assert.deepStrictEqual(result.items[0].changesets, [
 			{
-				id: 'session',
 				label: 'Session Changes',
 				uriTemplate: `${sessionUri}/changeset/session`,
 				additions: 5,
@@ -544,7 +542,7 @@ suite('ProtocolServerHandler', () => {
 		stateManager.dispatchServerAction({ type: ActionType.SessionReady, session: sessionUri });
 		// Register the changeset before the first connection so the initial
 		// subscription succeeds.
-		stateManager.registerChangeset(sessionUri, 'session');
+		stateManager.registerChangeset(changesetUri);
 
 		const transport1 = connectClient('client-rc', [changesetUri]);
 		const resp = findResponse(transport1.sent, 1);

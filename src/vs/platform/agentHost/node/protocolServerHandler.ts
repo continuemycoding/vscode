@@ -657,9 +657,9 @@ export class ProtocolServerHandler extends Disposable {
 			// register any concrete operation handlers. The body validates
 			// the request shape against the current changeset state so that
 			// future producers slotting in handlers don't need to repeat
-			// boilerplate, then returns a structured failure for the
-			// "no handler" case. See the Changesets spec section "Changeset
-			// Operations" for the contract.
+			// boilerplate, then rejects the request with a JSON-RPC error
+			// for the "no handler" case. See the Changesets spec section
+			// "Changeset Operations" for the contract.
 			const state = this._stateManager.getChangesetState(params.changeset);
 			if (!state) {
 				throw new ProtocolError(AHP_SESSION_NOT_FOUND, `Changeset not found: ${params.changeset}`);
@@ -676,10 +676,7 @@ export class ProtocolServerHandler extends Disposable {
 			if (!op.scopes.includes(targetKind)) {
 				throw new ProtocolError(JsonRpcErrorCodes.InvalidParams, `Operation '${params.operationId}' does not support scope '${targetKind}' (allowed: ${op.scopes.join(', ')})`);
 			}
-			return {
-				ok: false,
-				message: 'No operation handler registered for this changeset',
-			};
+			throw new ProtocolError(JsonRpcErrorCodes.InternalError, `No operation handler registered for '${params.operationId}' on changeset ${params.changeset}`);
 		},
 	};
 

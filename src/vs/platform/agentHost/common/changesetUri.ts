@@ -18,8 +18,9 @@ import type { URI } from './state/sessionState.js';
  * server cleanly tear down every changeset for a session when that session
  * is disposed (the reverse-lookup is just a string-prefix scan).
  *
- * The id portion is the unmodified `ChangesetSummary.id` value the catalogue
- * advertised — this module performs no escaping.
+ * The id portion is a producer-defined token (e.g. {@link SESSION_CHANGESET_ID})
+ * that names the catalogue entry within the session URI namespace; this
+ * module performs no escaping.
  *
  * v1 of the changeset model only emits static (variable-free) URIs and the
  * helpers below enforce that: ids must be non-empty and must not contain
@@ -35,7 +36,7 @@ import type { URI } from './state/sessionState.js';
  * producer's only entry). Shared across server-side producers and
  * client-side consumers so the literal `'session'` string isn't repeated.
  */
-export const SESSION_CHANGESET_ID = 'session';
+const SESSION_CHANGESET_ID = 'session';
 
 /**
  * Localized human-readable label for the session-wide changeset entry.
@@ -49,6 +50,14 @@ export const sessionChangesetLabel = (): string => localize('sessionChangeset.la
  * other resource scoped to the same session.
  */
 const CHANGESET_PATH_SEGMENT = '/changeset/';
+
+/**
+ * Returns the subscribable URI for the session-wide changeset on the session at
+ * `sessionUri`.
+ */
+export function buildSessionChangesetUri(sessionUri: URI): URI {
+	return `${sessionUri}${CHANGESET_PATH_SEGMENT}${SESSION_CHANGESET_ID}`;
+}
 
 /**
  * Returns the subscribable URI for `changesetId` on the session at
@@ -97,4 +106,15 @@ export function parseChangesetUri(uri: URI): { sessionUri: URI; changesetId: str
  */
 export function isChangesetUri(uri: URI): boolean {
 	return parseChangesetUri(uri) !== undefined;
+}
+
+/**
+ * Returns `true` iff `uri` is the session-wide changeset URI (the v1
+ * producer's only entry — a static URI of the form
+ * `<sessionUri>/changeset/session`). Used by callers that need to single
+ * out the session entry inside `summary.changesets` now that catalogue
+ * entries no longer carry a separate `id` discriminator.
+ */
+export function isSessionChangesetUri(uri: URI): boolean {
+	return parseChangesetUri(uri)?.changesetId === SESSION_CHANGESET_ID;
 }

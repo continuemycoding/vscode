@@ -2516,7 +2516,6 @@ suite('AgentSideEffects', () => {
 		const changesets = stateManager.getSessionState(sessionStr)?.summary.changesets;
 		assert.deepStrictEqual(changesets, [
 			{
-				id: 'session',
 				label: 'Session Changes',
 				uriTemplate: `${sessionStr}/changeset/session`,
 			},
@@ -2569,7 +2568,6 @@ suite('AgentSideEffects', () => {
 		const catalogue = stateManager.getSessionState(sessionStr)?.summary.changesets;
 		assert.deepStrictEqual(catalogue, [
 			{
-				id: 'session',
 				label: 'Session Changes',
 				uriTemplate: changesetUri,
 				additions: 6,
@@ -2617,7 +2615,6 @@ suite('AgentSideEffects', () => {
 			],
 			catalogue: [
 				{
-					id: 'session',
 					label: 'Session Changes',
 					uriTemplate: changesetUri,
 					additions: 4,

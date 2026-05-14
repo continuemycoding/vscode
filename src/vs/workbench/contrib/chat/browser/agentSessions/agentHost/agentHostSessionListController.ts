@@ -9,7 +9,7 @@ import { Disposable } from '../../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../../base/common/uuid.js';
 import { AgentSession, type IAgentConnection } from '../../../../../../platform/agentHost/common/agentService.js';
-import { SESSION_CHANGESET_ID } from '../../../../../../platform/agentHost/common/changesetUri.js';
+import { isSessionChangesetUri } from '../../../../../../platform/agentHost/common/changesetUri.js';
 import type { ChangesetSummary } from '../../../../../../platform/agentHost/common/state/protocol/state.js';
 import { SessionStatus, type SessionSummary } from '../../../../../../platform/agentHost/common/state/sessionState.js';
 import { IProductService } from '../../../../../../platform/product/common/productService.js';
@@ -26,7 +26,7 @@ import { IAgentHostUntitledProvisionalSessionService } from './agentHostUntitled
  * expanded changeset URI.
  */
 function pickSessionChangeset(catalogue: readonly ChangesetSummary[] | undefined): ChangesetSummary | undefined {
-	return catalogue?.find(c => c.id === SESSION_CHANGESET_ID);
+	return catalogue?.find(c => isSessionChangesetUri(c.uriTemplate));
 }
 
 /**

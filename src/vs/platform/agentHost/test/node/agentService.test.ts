@@ -30,7 +30,7 @@ import { MockAgent, ScriptedMockAgent } from './mockAgent.js';
 import { mapSessionEventsToHistoryRecords } from './historyRecordFixtures.js';
 import { type ISessionEvent } from '../../node/copilot/mapSessionEvents.js';
 import { createNoopGitService, createSessionDataService } from '../common/sessionTestHelpers.js';
-import { buildChangesetUri, SESSION_CHANGESET_ID } from '../../common/changesetUri.js';
+import { buildSessionChangesetUri } from '../../common/changesetUri.js';
 
 /**
  * Loads a JSONL fixture of raw Copilot SDK events, runs them through
@@ -552,7 +552,6 @@ suite('AgentService (node dispatcher)', () => {
 			assert.strictEqual(sessions.length, 1);
 			assert.deepStrictEqual(sessions[0].changesets, [
 				{
-					id: 'session',
 					label: 'Session Changes',
 					uriTemplate: `${sessionUri.toString()}/changeset/session`,
 					additions: 8,
@@ -666,7 +665,7 @@ suite('AgentService (node dispatcher)', () => {
 
 			// Seed live changeset state directly: a single file with
 			// different counts than the stale persisted blob.
-			const changesetUri = svc.stateManager.registerChangeset(sessionUri.toString(), SESSION_CHANGESET_ID);
+			const changesetUri = svc.stateManager.registerChangeset(buildSessionChangesetUri(sessionUri.toString()));
 			svc.stateManager.dispatchServerAction({
 				type: ActionType.ChangesetFileSet,
 				changeset: changesetUri,
@@ -684,7 +683,6 @@ suite('AgentService (node dispatcher)', () => {
 			const sessions = await svc.listSessions();
 			assert.deepStrictEqual(sessions[0].changesets, [
 				{
-					id: SESSION_CHANGESET_ID,
 					label: 'Session Changes',
 					uriTemplate: changesetUri,
 					additions: 1,
@@ -733,7 +731,7 @@ suite('AgentService (node dispatcher)', () => {
 			// Seed a ready (zero-file) live changeset state — this alone
 			// must be authoritative enough to suppress the persisted-diffs
 			// read.
-			const changesetUri = svc.stateManager.registerChangeset(sessionUri.toString(), SESSION_CHANGESET_ID);
+			const changesetUri = svc.stateManager.registerChangeset(buildSessionChangesetUri(sessionUri.toString()));
 			svc.stateManager.dispatchServerAction({
 				type: ActionType.ChangesetStatusChanged,
 				changeset: changesetUri,
@@ -775,12 +773,11 @@ suite('AgentService (node dispatcher)', () => {
 
 			// Register a changeset but leave it in the default
 			// `Computing` status (no ChangesetStatusChanged dispatch).
-			svc.stateManager.registerChangeset(sessionUri.toString(), SESSION_CHANGESET_ID);
+			svc.stateManager.registerChangeset(buildSessionChangesetUri(sessionUri.toString()));
 
 			const sessions = await svc.listSessions();
 			assert.deepStrictEqual(sessions[0].changesets, [
 				{
-					id: SESSION_CHANGESET_ID,
 					label: 'Session Changes',
 					uriTemplate: `${sessionUri.toString()}/changeset/session`,
 					additions: 7,
@@ -945,7 +942,7 @@ suite('AgentService (node dispatcher)', () => {
 			service.registerProvider(copilotAgent);
 			const session = await service.createSession({ provider: 'copilot' });
 
-			const changesetUri = buildChangesetUri(session.toString(), SESSION_CHANGESET_ID);
+			const changesetUri = buildSessionChangesetUri(session.toString());
 			const snapshot = await service.subscribe(URI.parse(changesetUri), 'client-cs-known');
 
 			assert.deepStrictEqual(
@@ -968,7 +965,7 @@ suite('AgentService (node dispatcher)', () => {
 			// is not materialized as a side effect of subscribing to a child
 			// changeset URI.
 			const sessionUri = URI.from({ scheme: 'copilot', path: '/missing-session' }).toString();
-			const changesetUri = buildChangesetUri(sessionUri, SESSION_CHANGESET_ID);
+			const changesetUri = buildSessionChangesetUri(sessionUri);
 
 			await assert.rejects(
 				() => service.subscribe(URI.parse(changesetUri), 'client-cs-unknown'),
@@ -1771,7 +1768,6 @@ suite('AgentService (node dispatcher)', () => {
 			assert.ok(state);
 			assert.deepStrictEqual(state!.summary.changesets, [
 				{
-					id: 'session',
 					label: 'Session Changes',
 					uriTemplate: `${sessionResource.toString()}/changeset/session`,
 					additions: 5,
@@ -1814,7 +1810,6 @@ suite('AgentService (node dispatcher)', () => {
 			// entry (with no counts) — but no files were seeded.
 			assert.deepStrictEqual(state!.summary.changesets, [
 				{
-					id: 'session',
 					label: 'Session Changes',
 					uriTemplate: `${sessionResource.toString()}/changeset/session`,
 				},

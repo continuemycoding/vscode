@@ -13,6 +13,7 @@ import { ActionType, NotificationType, type ActionEnvelope, type INotification }
 import { SessionSummary, ResponsePartKind, ROOT_STATE_URI, SessionLifecycle, SessionStatus, TurnState, buildSubagentSessionUri, buildSubagentSessionUriPrefix, isSubagentSession, parseSubagentSessionUri, type MarkdownResponsePart, type SessionState } from '../../common/state/sessionState.js';
 import { type SessionSummaryChangedNotification } from '../../common/state/protocol/notifications.js';
 import { AgentHostStateManager } from '../../node/agentHostStateManager.js';
+import { buildChangesetUri, buildSessionChangesetUri } from '../../common/changesetUri.js';
 
 suite('AgentHostStateManager', () => {
 
@@ -567,7 +568,7 @@ suite('AgentHostStateManager', () => {
 	});
 	test('disposeChangeset emits ChangesetCleared and removes the state', () => {
 		manager.createSession(makeSessionSummary());
-		const changeset = manager.registerChangeset(sessionUri, 'session');
+		const changeset = manager.registerChangeset(buildSessionChangesetUri(sessionUri));
 
 		const envelopes: ActionEnvelope[] = [];
 		disposables.add(manager.onDidEmitEnvelope(e => envelopes.push(e)));
@@ -582,7 +583,7 @@ suite('AgentHostStateManager', () => {
 
 	test('producer-emitted ChangesetCleared keeps the state alive (recompute path)', () => {
 		manager.createSession(makeSessionSummary());
-		const changeset = manager.registerChangeset(sessionUri, 'session');
+		const changeset = manager.registerChangeset(buildSessionChangesetUri(sessionUri));
 		manager.dispatchServerAction({
 			type: ActionType.ChangesetFileSet,
 			changeset,
@@ -613,7 +614,7 @@ suite('AgentHostStateManager', () => {
 		// when the user clicks back into the session and the list re-seeds
 		// the changeset.
 		manager.createSession(makeSessionSummary());
-		const changeset = manager.registerChangeset(sessionUri, 'session');
+		const changeset = manager.registerChangeset(buildSessionChangesetUri(sessionUri));
 		manager.dispatchServerAction({
 			type: ActionType.ChangesetFileSet,
 			changeset,
@@ -635,7 +636,7 @@ suite('AgentHostStateManager', () => {
 
 	test('deleteSession disposes per-session changesets before emitting SessionRemoved', () => {
 		manager.createSession(makeSessionSummary());
-		const changeset = manager.registerChangeset(sessionUri, 'session');
+		const changeset = manager.registerChangeset(buildSessionChangesetUri(sessionUri));
 		manager.dispatchServerAction({
 			type: ActionType.ChangesetFileSet,
 			changeset,
@@ -692,7 +693,7 @@ suite('AgentHostStateManager', () => {
 		// Sanity: registering the same URI and re-dispatching produces an
 		// envelope and advances the seq, proving the early return doesn't
 		// break valid changesets.
-		const registered = manager.registerChangeset(sessionUri, 'missing');
+		const registered = manager.registerChangeset(buildChangesetUri(sessionUri, 'missing'));
 		assert.strictEqual(registered, changesetUri);
 		manager.dispatchServerAction({
 			type: ActionType.ChangesetFileSet,

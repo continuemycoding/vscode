@@ -427,8 +427,6 @@ export interface SessionSummary {
  * @category Changesets
  */
 export interface ChangesetSummary {
-	/** Stable identifier, unique within the session. */
-	id: string;
 	/** Human-readable label, e.g. `"Uncommitted Changes"`. */
 	label: string;
 	/**

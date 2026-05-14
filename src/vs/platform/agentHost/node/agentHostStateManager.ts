@@ -14,7 +14,7 @@ import { rootReducer, sessionReducer, changesetReducer } from '../common/state/s
 import { createRootState, createSessionState, SessionLifecycle, type ChangesetState, type ChangesetSummary, type RootState, type SessionMeta, type SessionState, type SessionSummary, type Turn, type URI, ROOT_STATE_URI, ChangesetStatus } from '../common/state/sessionState.js';
 import { IPermissionsValue, platformRootSchema } from '../common/agentHostSchema.js';
 import { SessionConfigKey } from '../common/sessionConfigKeys.js';
-import { buildChangesetUri, parseChangesetUri } from '../common/changesetUri.js';
+import { parseChangesetUri } from '../common/changesetUri.js';
 
 /**
  * Field-level equality for two changeset catalogue arrays. Used by
@@ -28,8 +28,7 @@ function changesetCataloguesEqual(a: readonly ChangesetSummary[] | undefined, b:
 	for (let i = 0; i < a.length; i++) {
 		const x = a[i];
 		const y = b[i];
-		if (x.id !== y.id
-			|| x.label !== y.label
+		if (x.label !== y.label
 			|| x.uriTemplate !== y.uriTemplate
 			|| x.description !== y.description
 			|| x.additions !== y.additions
@@ -404,10 +403,13 @@ export class AgentHostStateManager extends Disposable {
 	 * can safely re-register on session resume without double-creating
 	 * state.
 	 *
-	 * Returns the expanded changeset URI for convenience.
+	 * Callers construct `changesetUri` via {@link buildSessionChangesetUri}
+	 * for the session-wide entry, or {@link buildChangesetUri} for any
+	 * other catalogue entry.
+	 *
+	 * Returns the supplied changeset URI for caller convenience.
 	 */
-	registerChangeset(session: URI, changesetId: string, initialStatus: ChangesetStatus = ChangesetStatus.Computing): URI {
-		const changesetUri = buildChangesetUri(session, changesetId);
+	registerChangeset(changesetUri: URI, initialStatus: ChangesetStatus = ChangesetStatus.Computing): URI {
 		if (this._changesetStates.has(changesetUri)) {
 			return changesetUri;
 		}

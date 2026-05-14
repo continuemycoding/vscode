@@ -1088,29 +1088,16 @@ export type ChangesetOperationTarget =
 	| { kind: ChangesetOperationTargetKind.Range; resource: URI; side?: 'before' | 'after'; range: TextRange };
 
 /**
- * Discriminator for {@link ChangesetOperationFollowUp}.
- *
- * @category Commands
- */
-export const enum ChangesetOperationFollowUpKind {
-	/** Open content in the user's preferred external handler (e.g. browser). */
-	OpenUri = 'openUri',
-	/** Surface fetched content (e.g. a generated patch) inside the editor. */
-	Content = 'content',
-}
-
-/**
  * Optional follow-up surfaced by the server after an operation completes —
  * a {@link ContentRef} the client can fetch and display.
  *
- * `kind` signals how the client should surface the content:
- * - `Content` — display inline inside the editor.
- * - `OpenUri` — open in the user's preferred external handler (e.g. browser).
+ * Set `external` to `true` to open the content in the user's preferred
+ * external handler (e.g. browser); otherwise the client is expected to
+ * surface it inline.
  *
  * @category Commands
  */
 export interface ChangesetOperationFollowUp {
-	kind: ChangesetOperationFollowUpKind;
 	content: ContentRef;
 	/** When `true`, open in an external handler rather than inline. */
 	external?: boolean;
@@ -1152,14 +1139,15 @@ export interface InvokeChangesetOperationParams {
  * Result of the {@link InvokeChangesetOperationParams | `invokeChangesetOperation`}
  * command.
  *
- * `ok: true` indicates the server accepted the operation; the operation
- * MAY still produce subsequent failure feedback through the
+ * Success is implicit: the server returns this result when it accepted
+ * the operation. Failure is signalled by rejecting the JSON-RPC request
+ * with an appropriate error code, not by any field on this result. The
+ * operation MAY still produce subsequent failure feedback through the
  * {@link ChangesetStatusChangedAction | `changeset/statusChanged`} stream.
  *
  * @category Commands
  */
 export interface InvokeChangesetOperationResult {
-	ok: boolean;
 	/** Optional human-readable message describing the result. */
 	message?: StringOrMarkdown;
 	/** Optional follow-up: a URI to open (e.g. a PR), a content ref, etc. */

@@ -14,7 +14,7 @@ import { IInstantiationService } from '../../instantiation/common/instantiation.
 import { ILogService } from '../../log/common/log.js';
 import { AgentSignal, IAgent, IAgentToolPendingConfirmationSignal } from '../common/agentService.js';
 import { IDiffComputeService } from '../common/diffComputeService.js';
-import { SESSION_CHANGESET_ID, sessionChangesetLabel } from '../common/changesetUri.js';
+import { buildSessionChangesetUri, isSessionChangesetUri, sessionChangesetLabel } from '../common/changesetUri.js';
 import { ISessionDatabase, ISessionDataService } from '../common/sessionDataService.js';
 import type { AgentInfo } from '../common/state/protocol/state.js';
 import { ActionType, isSessionAction, StateAction, type SessionToolCallCompleteAction } from '../common/state/sessionActions.js';
@@ -980,7 +980,7 @@ export class AgentSideEffects extends Disposable {
 	 * default catalogue entry — the diff producer doesn't run for them.
 	 */
 	publishSessionChangesetCatalogue(session: ProtocolURI): void {
-		const changesetUri = this._stateManager.registerChangeset(session, SESSION_CHANGESET_ID);
+		const changesetUri = this._stateManager.registerChangeset(buildSessionChangesetUri(session));
 		this._ensureSessionChangesetCatalogue(session, changesetUri);
 	}
 
@@ -1005,7 +1005,7 @@ export class AgentSideEffects extends Disposable {
 	 * `agentService.listSessions` instead.
 	 */
 	restoreSessionChangeset(session: ProtocolURI, diffs: readonly ISessionFileDiff[]): void {
-		const changesetUri = this._stateManager.registerChangeset(session, SESSION_CHANGESET_ID);
+		const changesetUri = this._stateManager.registerChangeset(buildSessionChangesetUri(session));
 		// Only attempt to publish the catalogue summary entry when the
 		// session state exists — the catalogue lives on `summary.changesets`,
 		// which the state manager only tracks per-session. For unopened
@@ -1062,7 +1062,7 @@ export class AgentSideEffects extends Disposable {
 			this._logService.warn(`[AgentSideEffects] Failed to open session database for diff computation: ${session}`, err);
 			return;
 		}
-		const changesetUri = this._stateManager.registerChangeset(session, SESSION_CHANGESET_ID);
+		const changesetUri = this._stateManager.registerChangeset(buildSessionChangesetUri(session));
 		this._ensureSessionChangesetCatalogue(session, changesetUri);
 		try {
 			// Prefer a git-driven diff so terminal-driven file changes show up
@@ -1115,11 +1115,10 @@ export class AgentSideEffects extends Disposable {
 			return;
 		}
 		const existing = sessionState.summary.changesets ?? [];
-		if (existing.some(c => c.id === SESSION_CHANGESET_ID)) {
+		if (existing.some(c => isSessionChangesetUri(c.uriTemplate))) {
 			return;
 		}
 		const entry: ChangesetSummary = {
-			id: SESSION_CHANGESET_ID,
 			label: sessionChangesetLabel(),
 			uriTemplate: changesetUri,
 		};
@@ -1204,7 +1203,7 @@ export class AgentSideEffects extends Disposable {
 			{ additions: 0, deletions: 0 },
 		);
 		const existing = sessionState.summary.changesets ?? [];
-		const next = existing.map(c => c.id === SESSION_CHANGESET_ID
+		const next = existing.map(c => isSessionChangesetUri(c.uriTemplate)
 			? { ...c, additions: totals.additions, deletions: totals.deletions, files: nextFilesById.size }
 			: c,
 		);
