@@ -129,7 +129,7 @@
     "watch-typecheck-web": "tsgo --project ./tsconfig.browser.json --noEmit --watch"
   },
   "devDependencies": {
-    "@types/node": "^22.18.10",
+    "@types/node": "24.x",
     "@vscode/codicons": "^0.0.36"
   },
   "dependencies": {
