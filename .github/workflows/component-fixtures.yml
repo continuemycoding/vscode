@@ -1,14 +1,15 @@
 name: Component Fixtures
 
 on:
-  push:
-    branches:
-      - main
-      - 'release/*'
-  pull_request:
-    branches:
-      - main
-      - 'release/*'
+  workflow_dispatch:
+  # push:
+  #   branches:
+  #     - main
+  #     - 'release/*'
+  # pull_request:
+  #   branches:
+  #     - main
+  #     - 'release/*'
 
 permissions:
   contents: read

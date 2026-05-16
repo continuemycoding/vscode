@@ -1,0 +1,198 @@
+name: Build Windows desktop (executable)
+
+on:
+  push:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  VSCODE_QUALITY: oss
+  NPM_ARCH: x64
+  VSCODE_ARCH: x64
+
+jobs:
+  build:
+    name: Windows x64 package
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          lfs: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Prepare node_modules cache key
+        shell: pwsh
+        run: |
+          mkdir .build -ea 0
+          node build/azure-pipelines/common/computeNodeModulesCacheKey.ts win32 ${{ env.VSCODE_ARCH }} $(node -p process.arch) > .build/packagelockhash
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: actions/cache/restore@v5
+        with:
+          path: .build/node_modules_cache
+          key: node_modules-windows-${{ hashFiles('.build/packagelockhash') }}
+
+      - name: Extract node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit == 'true'
+        shell: pwsh
+        run: 7z.exe x .build/node_modules_cache/cache.7z -aoa
+
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          . build/azure-pipelines/win32/exec.ps1
+          $ErrorActionPreference = "Stop"
+
+          for ($i = 1; $i -le 5; $i++) {
+            try {
+              exec { npm ci }
+              break
+            }
+            catch {
+              if ($i -eq 5) {
+                Write-Error "npm ci failed after 5 attempts"
+                throw
+              }
+              Write-Host "npm ci failed attempt $i, retrying..."
+              Start-Sleep -Seconds 2
+            }
+          }
+        env:
+          npm_config_arch: ${{ env.NPM_ARCH }}
+          npm_config_foreground_scripts: "true"
+          VSCODE_ARCH: ${{ env.VSCODE_ARCH }}
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create node_modules archive
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          . build/azure-pipelines/win32/exec.ps1
+          $ErrorActionPreference = "Stop"
+          exec { node build/azure-pipelines/common/listNodeModules.ts .build/node_modules_list.txt }
+          # 勿用 exec 包 cmdlet：新开 shell 时 $LASTEXITCODE 可能为 $null，会与 0 不相等而误杀（见 exec.ps1）。
+          New-Item -ItemType Directory -Path .build/node_modules_cache -Force | Out-Null
+          exec { 7z.exe a .build/node_modules_cache/cache.7z -mx3 `@.build/node_modules_list.txt }
+
+      - name: Save node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: .build/node_modules_cache
+          key: node_modules-windows-${{ hashFiles('.build/packagelockhash') }}
+
+      - name: Prepare built-in extensions cache key
+        shell: pwsh
+        run: node build/azure-pipelines/common/computeBuiltInDepsCacheKey.ts > .build/builtindepshash
+
+      - name: Restore built-in extensions cache
+        id: cache-builtin-extensions
+        uses: actions/cache/restore@v5
+        with:
+          enableCrossOsArchive: true
+          path: .build/builtInExtensions
+          key: builtin-extensions-${{ hashFiles('.build/builtindepshash') }}
+
+      - name: Download built-in extensions
+        if: steps.cache-builtin-extensions.outputs.cache-hit != 'true'
+        run: node build/lib/builtInExtensions.ts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save built-in extensions cache
+        if: steps.cache-builtin-extensions.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          enableCrossOsArchive: true
+          path: .build/builtInExtensions
+          key: builtin-extensions-${{ hashFiles('.build/builtindepshash') }}
+
+      - name: Download Electron、core-ci、编译内置 Copilot
+        shell: pwsh
+        run: |
+          . build/azure-pipelines/win32/exec.ps1
+          $ErrorActionPreference = "Stop"
+
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              exec { npm exec -- npm-run-all2 -lp "electron ${{ env.VSCODE_ARCH }}" }
+              break
+            }
+            catch {
+              if ($i -eq 3) {
+                Write-Error "Electron download failed after 3 attempts"
+                throw
+              }
+              Write-Host "Electron download failed attempt $i, retrying..."
+              Start-Sleep -Seconds 5
+            }
+          }
+          exec { npm run gulp core-ci }
+          # vscode-*-min-ci 的 gulp CI 任务链中不包含 compileCopilotExtensionBuildTask；prepareBuiltInCopilotRipgrepShim
+          # 需要 .build/extensions/copilot 下已打包的 @github/copilot（参见 build-linux-executable.yml）。
+          exec { npm run gulp compile-copilot-extension-build }
+        env:
+          npm_config_arch: ${{ env.NPM_ARCH }}
+          VSCODE_ARCH: ${{ env.VSCODE_ARCH }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # patchWin32DependenciesTask 会对输出目录内所有 *.node 调用 rcedit；多平台依赖里带的 Linux/macOS .node（ELF 等）无 MZ 头会导致失败。
+      - name: 从 .build Copilot 预打包目录移除非 Windows PE 的 .node
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = Join-Path $env:GITHUB_WORKSPACE ".build/extensions/copilot/node_modules"
+          if (-not (Test-Path -LiteralPath $root)) { exit 0 }
+          Get-ChildItem -LiteralPath $root -Recurse -Filter "*.node" -File | ForEach-Object {
+            $path = $_.FullName
+            try {
+              $fs = [System.IO.File]::OpenRead($path)
+              try {
+                $buf = New-Object byte[] 2
+                $n = $fs.Read($buf, 0, 2)
+                if ($n -ge 2 -and $buf[0] -eq 0x4D -and $buf[1] -eq 0x5A) { return }
+              } finally { $fs.Dispose() }
+            } catch { return }
+            Write-Host "Removing non-PE addon: $path"
+            Remove-Item -LiteralPath $path -Force
+          }
+
+      - name: 打包桌面客户端（vscode-win32-x64-min-ci）
+        shell: pwsh
+        run: |
+          . build/azure-pipelines/win32/exec.ps1
+          $ErrorActionPreference = "Stop"
+          exec { npm run gulp "vscode-win32-${{ env.VSCODE_ARCH }}-min-ci" }
+        env:
+          npm_config_arch: ${{ env.NPM_ARCH }}
+          VSCODE_ARCH: ${{ env.VSCODE_ARCH }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 产物在仓库上一级；upload-artifact 的 path 不能含 ..，用解析后的绝对路径上传。
+      - id: vscode-out
+        shell: pwsh
+        run: |
+          $p = (Resolve-Path "$env:GITHUB_WORKSPACE\..\VSCode-win32-${{ env.VSCODE_ARCH }}").Path
+          "path=$p" >> $env:GITHUB_OUTPUT
+
+      - name: Upload packaged client
+        uses: actions/upload-artifact@v7
+        with:
+          name: vscode
+          path: ${{ steps.vscode-out.outputs.path }}
+          if-no-files-found: error
