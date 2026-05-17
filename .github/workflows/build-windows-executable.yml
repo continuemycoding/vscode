@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   VSCODE_QUALITY: oss
@@ -185,10 +185,15 @@ jobs:
 
       # 产物在仓库上一级；upload-artifact 的 path 不能含 ..，用解析后的绝对路径上传。
       - id: vscode-out
+        name: 解析产物路径并打ZIP
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           $p = (Resolve-Path "$env:GITHUB_WORKSPACE\..\VSCode-win32-${{ env.VSCODE_ARCH }}").Path
           "path=$p" >> $env:GITHUB_OUTPUT
+          $zip = Join-Path $env:GITHUB_WORKSPACE ("VSCode-win32-{0}.zip" -f $env:VSCODE_ARCH)
+          if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+          Compress-Archive -LiteralPath $p -DestinationPath $zip -CompressionLevel Optimal
 
       - name: Upload packaged client
         uses: actions/upload-artifact@v7
@@ -196,3 +201,17 @@ jobs:
           name: vscode
           path: ${{ steps.vscode-out.outputs.path }}
           if-no-files-found: error
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-oss-${{ github.run_id }}
+          name: Windows x64 OSS (${{ github.run_number }})
+          body: |
+            自动构建的 Windows x64 桌面版（ZIP 与 artifact 同源目录）。
+            - 提交: `${{ github.sha }}`
+            - 分支: `${{ github.ref_name }}`
+          files: VSCode-win32-${{ env.VSCODE_ARCH }}.zip
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
