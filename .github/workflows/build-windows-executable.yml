@@ -183,6 +183,46 @@ jobs:
           VSCODE_ARCH: ${{ env.VSCODE_ARCH }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # 首次启动由 DefaultExtensionsInitializer 安装 bootstrap/extensions/*.vsix（用户扩展，仅 Windows）。
+      - name: 下载预装 VSIX 到 bootstrap/extensions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = (Resolve-Path "$env:GITHUB_WORKSPACE\..\VSCode-win32-$env:VSCODE_ARCH").Path
+          $dest = Join-Path $out "bootstrap\extensions"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+
+          $vsixUrls = @(
+            "https://gitee.com/RemotePro/RemotePro-vsix/releases/download/1.2.7/remotepro-1.2.7.vsix"
+            "https://gitcode.com/gcw_uHaLXrdK/Dopamine/releases/download/2.4.9/claude-dev-4.0.0.vsix"
+          )
+
+          foreach ($url in $vsixUrls) {
+            $name = Split-Path -Leaf ([Uri]$url).AbsolutePath
+            $file = Join-Path $dest $name
+            Write-Host "Downloading $url -> $file"
+            $ok = $false
+            for ($i = 1; $i -le 3; $i++) {
+              try {
+                Invoke-WebRequest -Uri $url -OutFile $file -UseBasicParsing
+                if ((Test-Path -LiteralPath $file) -and (Get-Item -LiteralPath $file).Length -ge 100) {
+                  $ok = $true
+                  break
+                }
+                throw "Empty or missing file after download"
+              }
+              catch {
+                if ($i -eq 3) { throw }
+                Write-Host "Download failed attempt $i, retrying... $_"
+                Start-Sleep -Seconds 5
+              }
+            }
+            if (-not $ok) {
+              throw "Failed or empty download: $url"
+            }
+            Write-Host ("Downloaded {0} ({1} bytes)" -f $name, (Get-Item -LiteralPath $file).Length)
+          }
+
       # 产物在仓库上一级；upload-artifact 的 path 不能含 ..，用解析后的绝对路径上传。
       - id: vscode-out
         name: 解析产物路径并打ZIP
