@@ -154,6 +154,20 @@ jobs:
         run: |
           . build/azure-pipelines/win32/exec.ps1
           $ErrorActionPreference = "Stop"
+          # Add Windows SDK to PATH for patchWin32DependenciesTask signtool usage.
+          $sdkBin = "C:\Program Files (x86)\Windows Kits\10\bin"
+          $sdk = @(
+            (Join-Path $sdkBin "10.0.26100.0\x64")
+            Get-ChildItem -LiteralPath $sdkBin -Directory -ErrorAction SilentlyContinue |
+              Sort-Object Name -Descending |
+              ForEach-Object { Join-Path $_.FullName "x64" }
+          ) | Where-Object { Test-Path -LiteralPath (Join-Path $_ "signtool.exe") } |
+            Select-Object -First 1
+          if (-not $sdk) {
+            throw "signtool.exe not found under Windows Kits; install Windows SDK or update PATH."
+          }
+          Write-Host "Using Windows SDK signtool from: $sdk"
+          $env:PATH = "$sdk;$env:PATH"
           exec { npm run gulp "vscode-win32-${{ env.VSCODE_ARCH }}-min-ci" }
         env:
           npm_config_arch: ${{ env.NPM_ARCH }}
