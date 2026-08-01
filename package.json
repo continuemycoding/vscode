@@ -84,6 +84,7 @@
     "minify-vscode-reh-web": "npm run gulp minify-vscode-reh-web",
     "hygiene": "npm run gulp hygiene",
     "core-ci": "npm run gulp core-ci",
+    "core-ci-desktop": "npm run gulp core-ci-desktop",
     "extensions-ci": "npm run gulp extensions-ci",
     "perf": "node scripts/code-perf.js",
     "perf:chat": "node scripts/chat-simulation/test-chat-perf-regression.js",

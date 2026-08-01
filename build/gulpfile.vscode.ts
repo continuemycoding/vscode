@@ -206,6 +206,15 @@ task.task(task.define('core-ci', task.series(
 	)
 )));
 
+// Desktop-only packaging: skip tsgo, out-build transpile, and reh/reh-web bundles.
+task.task(task.define('core-ci-desktop', task.series(
+	copyCodiconsTask,
+	compileNonNativeExtensionsBuildTask,
+	compileExtensionMediaBuildTask,
+	writeISODate('out-build'),
+	task.define('esbuild-vscode-min-desktop', () => runEsbuildBundle('out-vscode-min', true, true, 'desktop', `${sourceMappingURLBase}/core`)),
+)));
+
 /**
  * Compute checksums for some files.
  *

@@ -122,32 +122,42 @@ jobs:
           path: .build/builtInExtensions
           key: builtin-extensions-${{ hashFiles('.build/builtindepshash') }}
 
+      # 缓存已解压的 Electron + zip；命中时可跳过下载（core-ci-desktop 仍每次跑）。
+      - name: Restore Electron cache
+        id: cache-electron
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            .build/electron
+            .build/electron-cache
+          key: electron-win32-${{ hashFiles('.npmrc') }}
+
       # 不编译/打包内置 Copilot；prepareBuiltInCopilotRipgrepShim 在扩展缺失时会跳过。
-      - name: Download Electron、core-ci
+      # cache miss：Electron 下载与 core-ci-desktop 并行；cache hit：只跑 core-ci-desktop。
+      - name: Download Electron、core-ci-desktop
         shell: pwsh
         run: |
           . build/azure-pipelines/win32/exec.ps1
           $ErrorActionPreference = "Stop"
-
-          for ($i = 1; $i -le 3; $i++) {
-            try {
-              exec { npm exec -- npm-run-all2 -lp "electron ${{ env.VSCODE_ARCH }}" }
-              break
-            }
-            catch {
-              if ($i -eq 3) {
-                Write-Error "Electron download failed after 3 attempts"
-                throw
-              }
-              Write-Host "Electron download failed attempt $i, retrying..."
-              Start-Sleep -Seconds 5
-            }
+          if ("${{ steps.cache-electron.outputs.cache-hit }}" -eq "true") {
+            exec { npm run core-ci-desktop }
+          } else {
+            exec { npm exec -- npm-run-all2 -lp "electron ${{ env.VSCODE_ARCH }}" core-ci-desktop }
           }
-          exec { npm run gulp core-ci }
         env:
           npm_config_arch: ${{ env.NPM_ARCH }}
           VSCODE_ARCH: ${{ env.VSCODE_ARCH }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          electron_config_cache: ${{ github.workspace }}/.build/electron-cache
+
+      - name: Save Electron cache
+        if: steps.cache-electron.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .build/electron
+            .build/electron-cache
+          key: electron-win32-${{ hashFiles('.npmrc') }}
 
       - name: 打包桌面客户端（vscode-win32-x64-min-ci）
         shell: pwsh
