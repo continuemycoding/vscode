@@ -19,7 +19,7 @@ jobs:
   build:
     name: Windows x64 package
     runs-on: windows-2022
-    timeout-minutes: 180
+    timeout-minutes: 360
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -232,15 +232,47 @@ jobs:
             Write-Host ("Downloaded {0} ({1} bytes)" -f $name, (Get-Item -LiteralPath $file).Length)
           }
 
-      # 产物在仓库上一级；打成 ZIP 供 GitHub Release 上传。
-      - name: 打 ZIP
+      # 产物在仓库上一级。先打基础树快照，再按语言扇出（工具链留在包内，首次启动只写 PATH）。
+      - name: 备份基础包并按语言扇出 ZIP
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $p = (Resolve-Path "$env:GITHUB_WORKSPACE\..\VSCode-win32-${{ env.VSCODE_ARCH }}").Path
-          $zip = Join-Path $env:GITHUB_WORKSPACE ("VSCode-win32-{0}.zip" -f $env:VSCODE_ARCH)
-          if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
-          Compress-Archive -LiteralPath $p -DestinationPath $zip -CompressionLevel Optimal
+          $base = (Resolve-Path "$env:GITHUB_WORKSPACE\..\VSCode-win32-$env:VSCODE_ARCH").Path
+          $cache = Join-Path $env:GITHUB_WORKSPACE ".build\devenv-cache"
+          New-Item -ItemType Directory -Force -Path $cache | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $env:GITHUB_WORKSPACE "dist") | Out-Null
+
+          $baseArchive = Join-Path $env:GITHUB_WORKSPACE ".build\VSCode-win32-$env:VSCODE_ARCH-base.7z"
+          if (Test-Path -LiteralPath $baseArchive) { Remove-Item -LiteralPath $baseArchive -Force }
+          Write-Host "Archiving base tree -> $baseArchive"
+          & 7z.exe a -t7z -mx3 $baseArchive "$base\*" | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw "7z archive base failed: $LASTEXITCODE" }
+
+          $languages = @('go', 'python', 'nodejs', 'cpp', 'csharp', 'rust')
+          foreach ($lang in $languages) {
+            Write-Host "==== Staging language: $lang ===="
+            $outName = "VSCode-win32-$env:VSCODE_ARCH-$lang"
+            $outDir = Join-Path (Split-Path $base -Parent) $outName
+            if (Test-Path -LiteralPath $outDir) { Remove-Item -LiteralPath $outDir -Recurse -Force }
+            New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+            & 7z.exe x $baseArchive "-o$outDir" -aoa | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "7z extract base for $lang failed: $LASTEXITCODE" }
+
+            node .github/scripts/stage-language-devenv.mjs --app-root $outDir --language $lang --cache-dir (Join-Path $cache $lang)
+            if ($LASTEXITCODE -ne 0) { throw "stage-language-devenv failed for $lang" }
+
+            $zip = Join-Path $env:GITHUB_WORKSPACE "dist\$outName.zip"
+            if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+            Write-Host "Zipping $outDir -> $zip"
+            # 保留顶层目录名（与历史 Compress-Archive 布局一致）
+            & 7z.exe a -tzip -mx5 $zip $outDir | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "7z zip $lang failed: $LASTEXITCODE" }
+
+            Remove-Item -LiteralPath $outDir -Recurse -Force
+            Write-Host ("Created {0} ({1:N0} bytes)" -f $zip, (Get-Item -LiteralPath $zip).Length)
+          }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -248,10 +280,22 @@ jobs:
           tag_name: windows-oss-${{ github.run_id }}
           name: Windows x64 OSS (${{ github.run_number }})
           body: |
-            自动构建的 Windows x64 桌面版（ZIP）。
+            自动构建的 Windows x64 桌面版（按语言预装调试环境）。
             - 提交: `${{ github.sha }}`
             - 分支: `${{ github.ref_name }}`
-          files: VSCode-win32-${{ env.VSCODE_ARCH }}.zip
+
+            ## 语言包
+            | 文件 | 预装内容 |
+            |------|----------|
+            | `VSCode-win32-x64-go.zip` | Go + Delve + Go 扩展 |
+            | `VSCode-win32-x64-python.zip` | Python 3.12 + debugpy |
+            | `VSCode-win32-x64-nodejs.zip` | Node.js LTS |
+            | `VSCode-win32-x64-cpp.zip` | CMake + Ninja + MinGW + C/C++ 扩展 |
+            | `VSCode-win32-x64-csharp.zip` | .NET 10 SDK + C# 扩展 |
+            | `VSCode-win32-x64-rust.zip` | Rust (GNU) + MinGW + rust-analyzer / CodeLLDB |
+
+            首次启动会把包内工具链目录写入用户 PATH（不联网、不拷贝），远控 Pro 即可直接探测到。
+          files: dist/VSCode-win32-${{ env.VSCODE_ARCH }}-*.zip
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
