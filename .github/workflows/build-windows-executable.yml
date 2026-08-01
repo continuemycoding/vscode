@@ -122,7 +122,8 @@ jobs:
           path: .build/builtInExtensions
           key: builtin-extensions-${{ hashFiles('.build/builtindepshash') }}
 
-      - name: Download Electron、core-ci、编译内置 Copilot
+      # 不编译/打包内置 Copilot；prepareBuiltInCopilotRipgrepShim 在扩展缺失时会跳过。
+      - name: Download Electron、core-ci
         shell: pwsh
         run: |
           . build/azure-pipelines/win32/exec.ps1
@@ -143,34 +144,10 @@ jobs:
             }
           }
           exec { npm run gulp core-ci }
-          # vscode-*-min-ci 的 gulp CI 任务链中不包含 compileCopilotExtensionBuildTask；prepareBuiltInCopilotRipgrepShim
-          # 需要 .build/extensions/copilot 下已打包的 @github/copilot（参见 build-linux-executable.yml）。
-          exec { npm run gulp compile-copilot-extension-build }
         env:
           npm_config_arch: ${{ env.NPM_ARCH }}
           VSCODE_ARCH: ${{ env.VSCODE_ARCH }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # patchWin32DependenciesTask 会对输出目录内所有 *.node 调用 rcedit；多平台依赖里带的 Linux/macOS .node（ELF 等）无 MZ 头会导致失败。
-      - name: 从 .build Copilot 预打包目录移除非 Windows PE 的 .node
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $root = Join-Path $env:GITHUB_WORKSPACE ".build/extensions/copilot/node_modules"
-          if (-not (Test-Path -LiteralPath $root)) { exit 0 }
-          Get-ChildItem -LiteralPath $root -Recurse -Filter "*.node" -File | ForEach-Object {
-            $path = $_.FullName
-            try {
-              $fs = [System.IO.File]::OpenRead($path)
-              try {
-                $buf = New-Object byte[] 2
-                $n = $fs.Read($buf, 0, 2)
-                if ($n -ge 2 -and $buf[0] -eq 0x4D -and $buf[1] -eq 0x5A) { return }
-              } finally { $fs.Dispose() }
-            } catch { return }
-            Write-Host "Removing non-PE addon: $path"
-            Remove-Item -LiteralPath $path -Force
-          }
 
       - name: 打包桌面客户端（vscode-win32-x64-min-ci）
         shell: pwsh

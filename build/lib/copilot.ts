@@ -243,10 +243,16 @@ export function ensureCopilotPlatformPackage(platform: string, arch: string, nod
  * `node-pty` from the embedder (VS Code) via `hostRequire` and falls back to
  * its bundled copy only if that fails.
  *
- * Failures throw to fail the build because built-in packaging must guarantee
- * this artifact is present.
+ * When the built-in extension is absent (e.g. OSS/CI builds that skip
+ * `compile-copilot-extension-build`), this is a no-op. If the extension is
+ * present, failures throw so packaging cannot ship a broken Copilot tree.
  */
 export function prepareBuiltInCopilotRipgrepShim(platform: string, arch: string, builtInCopilotExtensionDir: string, appNodeModulesDir: string, options: PrepareBuiltInCopilotOptions = {}): void {
+	if (!fs.existsSync(builtInCopilotExtensionDir)) {
+		console.log(`[prepareBuiltInCopilotRipgrepShim] Skipping: built-in Copilot extension not present at ${builtInCopilotExtensionDir}`);
+		return;
+	}
+
 	const { nodePlatform, nodeArch } = toNodePlatformArch(platform, arch);
 	const platformArch = `${nodePlatform}-${nodeArch}`;
 	const copilotPackagePlatformArch = toCopilotPackagePlatformArch(platform, arch);
