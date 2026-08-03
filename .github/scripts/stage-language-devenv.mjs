@@ -22,7 +22,7 @@ import { Readable } from 'node:stream';
 import { gunzipSync } from 'node:zlib';
 const CSHARP_DOTNET_MAJOR = 10;
 const RUST_GNU_TOOLCHAIN = 'stable-x86_64-pc-windows-gnu';
-const PYTHON_VERSION = '3.12.10';
+const PYTHON_INSTALL_SERIES = '3.14';
 
 const MARKET_HEADERS = {
 	'User-Agent': 'VSCode Build',
@@ -318,11 +318,28 @@ async function stageCpp(devEnvRoot, cacheDir) {
 	await writePathEntries(devEnvRoot, ['CMake/bin', 'Ninja', 'MinGW/bin']);
 }
 
+async function latestPythonInstallVersion() {
+	const releases = await fetchJson('https://www.python.org/api/v2/downloads/release/');
+	const versions = releases
+		.filter(release => release.is_published && !release.pre_release)
+		.map(release => new RegExp(`^Python (${PYTHON_INSTALL_SERIES.replace('.', '\\.')})\\.(\\d+)$`).exec(release.name))
+		.filter(match => match !== null)
+		.map(match => ({ version: match[0].slice('Python '.length), patch: Number(match[2]) }))
+		.sort((a, b) => b.patch - a.patch);
+	if (!versions[0]) {
+		throw new Error(`No stable Python ${PYTHON_INSTALL_SERIES} release`);
+	}
+	return versions[0].version;
+}
+
 async function stagePython(devEnvRoot, cacheDir) {
-	const filename = `python-${PYTHON_VERSION}-amd64.exe`;
-	const url = `https://www.python.org/ftp/python/${PYTHON_VERSION}/${filename}`;
+	log(`Resolving latest Python ${PYTHON_INSTALL_SERIES} release…`);
+	const version = await latestPythonInstallVersion();
+	const filename = `python-${version}-amd64.exe`;
+	const url = `https://www.python.org/ftp/python/${version}/${filename}`;
 	const exePath = await downloadFile(url, join(cacheDir, filename));
-	const targetDir = join(devEnvRoot, 'Python312');
+	const targetDirName = `Python${PYTHON_INSTALL_SERIES.replace('.', '')}`;
+	const targetDir = join(devEnvRoot, targetDirName);
 	await fs.rm(targetDir, { recursive: true, force: true });
 	// Do not pre-create TargetDir — empty dir can hang the official installer.
 	log(`Installing Python silently into ${targetDir}`);
@@ -352,7 +369,7 @@ async function stagePython(devEnvRoot, cacheDir) {
 	if (!(await pathExists(join(targetDir, 'python.exe')))) {
 		throw new Error('python.exe missing after silent install');
 	}
-	await writePathEntries(devEnvRoot, ['Python312', 'Python312/Scripts']);
+	await writePathEntries(devEnvRoot, [targetDirName, `${targetDirName}/Scripts`]);
 }
 
 async function stageCsharp(devEnvRoot, cacheDir) {

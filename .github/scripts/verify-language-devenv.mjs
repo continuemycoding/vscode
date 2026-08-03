@@ -25,7 +25,7 @@ const CHECKS = {
 		{ rel: 'tools/dlv.exe', args: ['version'] },
 	],
 	python: [
-		{ rel: 'Python312/python.exe', args: ['--version'] },
+		{ rel: 'Python314/python.exe', args: ['--version'] },
 	],
 	nodejs: [
 		{ rel: 'nodejs/node.exe', args: ['--version'] },
