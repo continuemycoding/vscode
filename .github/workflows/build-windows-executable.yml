@@ -202,8 +202,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
 
           $vsixUrls = @(
-            "https://gitee.com/RemotePro/RemotePro-vsix/releases/download/1.2.7/remotepro-1.2.7.vsix"
-            "https://gitcode.com/gcw_uHaLXrdK/Dopamine/releases/download/2.4.9/claude-dev-4.0.0.vsix"
+            "https://gitee.com/RemotePro/RemotePro-vsix/releases/download/1.3.0/remotepro-1.3.0.vsix"
+            "https://gitcode.com/gcw_uHaLXrdK/Dopamine/releases/download/2.4.9/claude-dev-4.1.2.vsix"
           )
 
           foreach ($url in $vsixUrls) {
