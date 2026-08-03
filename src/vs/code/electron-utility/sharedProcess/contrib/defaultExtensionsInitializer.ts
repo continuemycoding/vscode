@@ -59,7 +59,36 @@ export class DefaultExtensionsInitializer extends Disposable {
 		}
 
 		this.logService.info('Initializing default extensions', extensionsLocation.toString());
-		await Promise.all(vsixs.map(async vsix => {
+		const extensions = await Promise.all(vsixs.map(async vsix => ({
+			vsix,
+			manifest: await this.extensionManagementService.getManifest(vsix.resource),
+		})));
+		const extensionsById = new Map(extensions.map(extension => [
+			`${extension.manifest.publisher}.${extension.manifest.name}`.toLowerCase(),
+			extension,
+		]));
+		const orderedExtensions: typeof extensions = [];
+		const visited = new Set<string>();
+		const visit = (id: string): void => {
+			const key = id.toLowerCase();
+			if (visited.has(key)) {
+				return;
+			}
+			visited.add(key);
+			const extension = extensionsById.get(key);
+			if (!extension) {
+				return;
+			}
+			for (const dependency of extension.manifest.extensionDependencies ?? []) {
+				visit(dependency);
+			}
+			orderedExtensions.push(extension);
+		};
+		for (const id of extensionsById.keys()) {
+			visit(id);
+		}
+
+		for (const { vsix } of orderedExtensions) {
 			this.logService.info('Installing default extension', vsix.resource.toString());
 			try {
 				await this.extensionManagementService.install(vsix.resource, { donotIncludePackAndDependencies: true, keepExisting: false });
@@ -67,7 +96,7 @@ export class DefaultExtensionsInitializer extends Disposable {
 			} catch (error) {
 				this.logService.error('Error installing default extension', vsix.resource.toString(), getErrorMessage(error));
 			}
-		}));
+		}
 		this.logService.info('Default extensions initialized', extensionsLocation.toString());
 	}
 

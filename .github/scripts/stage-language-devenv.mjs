@@ -35,7 +35,10 @@ const LANGUAGES = new Set(['go', 'python', 'nodejs', 'cpp', 'csharp', 'rust']);
 /** @type {Record<string, Array<{ id: string, file: string }>>} */
 const LANGUAGE_VSIX = {
 	go: [{ id: 'golang.go', file: 'golang.go.vsix' }],
-	python: [{ id: 'ms-python.debugpy', file: 'ms-python.debugpy.vsix' }],
+	python: [
+		{ id: 'ms-python.python', file: 'ms-python.python.vsix' },
+		{ id: 'ms-python.debugpy', file: 'ms-python.debugpy.vsix' },
+	],
 	nodejs: [],
 	cpp: [
 		{ id: 'ms-vscode.cpptools', file: 'ms-vscode.cpptools.vsix' },
@@ -189,11 +192,36 @@ async function downloadMarketplaceVsix(extensionId, destPath) {
 	log(`Saved ${basename(destPath)} (${vsixBuf.length} bytes)`);
 }
 
+async function readVsixManifest(vsixPath) {
+	const result = spawnSync('tar', ['-xOf', vsixPath, 'extension/package.json'], {
+		encoding: 'utf8',
+		windowsHide: true,
+	});
+	if (result.status !== 0) {
+		throw new Error(`Cannot read extension/package.json from ${vsixPath}: ${result.stderr}`);
+	}
+	return JSON.parse(result.stdout);
+}
+
 async function stageVsixes(appRoot, language) {
 	const destDir = join(appRoot, 'bootstrap', 'extensions');
 	await ensureDir(destDir);
-	for (const item of LANGUAGE_VSIX[language] || []) {
+	const items = LANGUAGE_VSIX[language] || [];
+	for (const item of items) {
 		await downloadMarketplaceVsix(item.id, join(destDir, item.file));
+	}
+
+	const stagedIds = new Set(items.map(item => item.id.toLowerCase()));
+	for (const item of items) {
+		const manifest = await readVsixManifest(join(destDir, item.file));
+		const actualId = `${manifest.publisher}.${manifest.name}`.toLowerCase();
+		if (actualId !== item.id.toLowerCase()) {
+			throw new Error(`VSIX identity mismatch: expected ${item.id}, got ${actualId}`);
+		}
+		const missing = (manifest.extensionDependencies || []).filter(id => !stagedIds.has(id.toLowerCase()));
+		if (missing.length > 0) {
+			throw new Error(`${item.id} has unstaged extension dependencies: ${missing.join(', ')}`);
+		}
 	}
 }
 
@@ -404,8 +432,8 @@ async function stageRust(devEnvRoot, cacheDir) {
 
 	const initUrl = 'https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe';
 	const initPath = await downloadFile(initUrl, join(cacheDir, 'rustup-init.exe'));
-	log('Running rustup-init…');
-	execFileSync(initPath, ['-y', '--default-toolchain', 'stable', '--no-modify-path'], {
+	log(`Running rustup-init with ${RUST_GNU_TOOLCHAIN}…`);
+	execFileSync(initPath, ['-y', '--default-toolchain', RUST_GNU_TOOLCHAIN, '--default-host', 'x86_64-pc-windows-gnu', '--no-modify-path'], {
 		stdio: 'inherit',
 		env: {
 			...process.env,
@@ -416,20 +444,22 @@ async function stageRust(devEnvRoot, cacheDir) {
 	});
 
 	const rustup = join(cargoHome, 'bin', 'rustup.exe');
-	if (!(await pathExists(rustup))) {
-		throw new Error('rustup.exe missing after rustup-init');
+	const rustc = join(cargoHome, 'bin', 'rustc.exe');
+	const cargo = join(cargoHome, 'bin', 'cargo.exe');
+	if (!(await pathExists(rustup)) || !(await pathExists(rustc)) || !(await pathExists(cargo))) {
+		throw new Error('rustup, rustc, or cargo missing after rustup-init');
 	}
-	log(`Installing ${RUST_GNU_TOOLCHAIN}…`);
-	execFileSync(rustup, ['toolchain', 'install', RUST_GNU_TOOLCHAIN], {
-		stdio: 'inherit',
+	const activeToolchain = execFileSync(rustup, ['show', 'active-toolchain'], {
+		encoding: 'utf8',
 		env: {
 			...process.env,
 			CARGO_HOME: cargoHome,
 			RUSTUP_HOME: rustupHome,
-			PATH: `${join(cargoHome, 'bin')};${process.env.PATH || ''}`,
 		},
-		timeout: 30 * 60 * 1000,
-	});
+	}).trim();
+	if (!activeToolchain.startsWith(RUST_GNU_TOOLCHAIN)) {
+		throw new Error(`Unexpected active Rust toolchain: ${activeToolchain}`);
+	}
 
 	await stageMingw(devEnvRoot, cacheDir);
 	await writePathEntries(devEnvRoot, ['.cargo/bin', 'MinGW/bin'], {

@@ -30,6 +30,20 @@ const CHECKS = {
 	nodejs: [
 		{ rel: 'nodejs/node.exe', args: ['--version'] },
 	],
+	cpp: [
+		{ rel: 'CMake/bin/cmake.exe', args: ['--version'] },
+		{ rel: 'Ninja/ninja.exe', args: ['--version'] },
+		{ rel: 'MinGW/bin/gcc.exe', args: ['--version'] },
+		{ rel: 'MinGW/bin/g++.exe', args: ['--version'] },
+	],
+	csharp: [
+		{ rel: 'dotnet/dotnet.exe', args: ['--info'] },
+	],
+	rust: [
+		{ rel: '.cargo/bin/rustc.exe', args: ['--version', '--verbose'], includes: 'host: x86_64-pc-windows-gnu' },
+		{ rel: '.cargo/bin/cargo.exe', args: ['--version'] },
+		{ rel: 'MinGW/bin/gcc.exe', args: ['--version'] },
+	],
 };
 
 function parseArgs(argv) {
@@ -81,8 +95,7 @@ async function verifyLanguage(language, workRoot, cacheRoot) {
 
 	const checks = CHECKS[language];
 	if (!checks) {
-		console.log(`No binary checks configured for ${language}; path-entries OK`);
-		return;
+		throw new Error(`No binary checks configured for ${language}`);
 	}
 
 	for (const check of checks) {
@@ -95,6 +108,9 @@ async function verifyLanguage(language, workRoot, cacheRoot) {
 			env: { ...process.env, PATH: `${pathPrefix};${process.env.PATH || ''}` },
 			timeout: 60_000,
 		});
+		if (check.includes && !out.includes(check.includes)) {
+			throw new Error(`${check.rel} output does not include ${JSON.stringify(check.includes)}`);
+		}
 		console.log(`OK ${check.rel}: ${String(out).trim().split(/\r?\n/)[0]}`);
 	}
 

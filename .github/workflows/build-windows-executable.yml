@@ -288,7 +288,7 @@ jobs:
             | 文件 | 预装内容 |
             |------|----------|
             | `VSCode-win32-x64-go.zip` | Go + Delve + Go 扩展 |
-            | `VSCode-win32-x64-python.zip` | Python 3.14 + debugpy |
+            | `VSCode-win32-x64-python.zip` | Python 3.14 + Python / debugpy 扩展 |
             | `VSCode-win32-x64-nodejs.zip` | Node.js LTS |
             | `VSCode-win32-x64-cpp.zip` | CMake + Ninja + MinGW + C/C++ 扩展 |
             | `VSCode-win32-x64-csharp.zip` | .NET 10 SDK + C# 扩展 |
