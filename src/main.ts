@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import * as fs from 'original-fs';
 import * as os from 'node:os';
 import { performance } from 'node:perf_hooks';
-import { configurePortable } from './bootstrap-node.js';
+import { configureBundledDevEnvironment, configurePortable } from './bootstrap-node.js';
 import { bootstrapESM } from './bootstrap-esm.js';
 import { app, protocol, crashReporter, Menu, contentTracing } from 'electron';
 import minimist from 'minimist';
@@ -30,8 +30,11 @@ perf.mark('code/willLoadMainBundle', {
 });
 perf.mark('code/didLoadMainBundle');
 
+// Configure the bundled development environment before portable data and IPC paths are resolved
+const bundledDevEnvironment = configureBundledDevEnvironment(product);
+
 // Enable portable support
-const portable = configurePortable(product);
+const portable = configurePortable(product, bundledDevEnvironment);
 
 const args = parseCLIArgs();
 // Configure static command line arguments

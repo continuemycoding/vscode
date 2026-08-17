@@ -8,6 +8,7 @@ import * as fs from 'node:fs';
 import { Buffer } from 'node:buffer';
 import { createRequire } from 'node:module';
 import type { IProductConfiguration } from './vs/base/common/product.js';
+import { createBundledDevEnvironmentEnvironment, IBundledDevEnvironmentConfiguration, loadBundledDevEnvironmentConfiguration } from './vs/base/node/bundledDevEnvironment.js';
 
 const require = createRequire(import.meta.url);
 const isWindows = process.platform === 'win32';
@@ -199,40 +200,69 @@ export function removeGlobalNodeJsModuleLookupPaths(): void {
 	};
 }
 
+function getApplicationPath(product: Partial<IProductConfiguration>): string {
+	const appRoot = path.dirname(import.meta.dirname);
+	if (process.env['VSCODE_DEV']) {
+		return appRoot;
+	}
+
+	if (process.platform === 'darwin') {
+		return path.dirname(path.dirname(path.dirname(appRoot)));
+	}
+
+	// appRoot = ..\Microsoft VS Code Insiders\<version>\resources\app
+	if (process.platform === 'win32' && product.win32VersionedUpdate) {
+		return path.dirname(path.dirname(path.dirname(appRoot)));
+	}
+
+	return path.dirname(path.dirname(appRoot));
+}
+
+/**
+ * Initializes the process environment for products that bundle a portable development environment.
+ */
+export function configureBundledDevEnvironment(product: Partial<IProductConfiguration>): IBundledDevEnvironmentConfiguration | undefined {
+	if (!product.bundledDevEnvironment || 'target' in product) {
+		return undefined;
+	}
+
+	let configuration: IBundledDevEnvironmentConfiguration;
+	try {
+		configuration = loadBundledDevEnvironmentConfiguration(getApplicationPath(product), process.platform === 'win32');
+	} catch (error) {
+		console.error(`Unable to initialize bundled development environment: ${error}`);
+		return undefined;
+	}
+
+	const environment = createBundledDevEnvironmentEnvironment(process.env, configuration, process.platform === 'win32');
+	Object.assign(process.env, environment);
+	for (const key of Object.keys(process.env)) {
+		if (!(key in environment)) {
+			delete process.env[key];
+		}
+	}
+	return configuration;
+}
+
 /**
  * Helper to enable portable mode.
  */
-export function configurePortable(product: Partial<IProductConfiguration>): { portableDataPath: string; isPortable: boolean } {
-	const appRoot = path.dirname(import.meta.dirname);
-
-	function getApplicationPath(): string {
-		if (process.env['VSCODE_DEV']) {
-			return appRoot;
-		}
-
-		if (process.platform === 'darwin') {
-			return path.dirname(path.dirname(path.dirname(appRoot)));
-		}
-
-		// appRoot = ..\Microsoft VS Code Insiders\<version>\resources\app
-		if (process.platform === 'win32' && product.win32VersionedUpdate) {
-			return path.dirname(path.dirname(path.dirname(appRoot)));
-		}
-
-		return path.dirname(path.dirname(appRoot));
-	}
-
+export function configurePortable(product: Partial<IProductConfiguration>, bundledDevEnvironment?: IBundledDevEnvironmentConfiguration): { portableDataPath: string; isPortable: boolean } {
 	function getPortableDataPath(): string {
+		if (bundledDevEnvironment) {
+			return bundledDevEnvironment.dataRoot;
+		}
+
 		if (process.env['VSCODE_PORTABLE']) {
 			return process.env['VSCODE_PORTABLE'];
 		}
 
 		if (process.platform === 'win32' || process.platform === 'linux') {
-			return path.join(getApplicationPath(), 'data');
+			return path.join(getApplicationPath(product), 'data');
 		}
 
 		const portableDataName = product.portable || `${product.applicationName}-portable-data`;
-		return path.join(path.dirname(getApplicationPath()), portableDataName);
+		return path.join(path.dirname(getApplicationPath(product)), portableDataName);
 	}
 
 	const portableDataPath = getPortableDataPath();

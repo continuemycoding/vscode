@@ -233,6 +233,7 @@ export interface IProductConfiguration {
 	readonly appCenter?: IAppCenterConfiguration;
 
 	readonly portable?: string;
+	readonly bundledDevEnvironment?: boolean;
 
 	readonly extensionKind?: { readonly [extensionId: string]: ('ui' | 'workspace' | 'web')[] };
 	readonly extensionPointExtensionKind?: { readonly [extensionPointId: string]: ('ui' | 'workspace' | 'web')[] };

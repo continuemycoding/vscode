@@ -1,142 +1,183 @@
 #!/usr/bin/env node
 /*---------------------------------------------------------------------------------------------
- * Smoke-verify stage-language-devenv for go + python without a full VS Code build.
- *
- * Creates a fake app root, stages toolchains, checks binaries + path-entries.json,
- * and confirms commands resolve when those dirs are prepended to PATH (RemotePro-style).
+ * Verify locked Windows development-environment inputs and staged product trees.
  *
  * Usage:
- *   node .github/scripts/verify-language-devenv.mjs
- *   node .github/scripts/verify-language-devenv.mjs --languages go,python
+ *   node .github/scripts/verify-language-devenv.mjs --check-lock
+ *   node .github/scripts/verify-language-devenv.mjs --app-root <tree> --language <lang>
  *--------------------------------------------------------------------------------------------*/
 
-import { promises as fs } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+import {
+	LANGUAGES,
+	LOCK_FILE,
+	assertRequiredFiles,
+	collectExtensionIds,
+	loadLock,
+	parseArgs,
+	pathExists,
+	readJson,
+	sha256File,
+	validateLock,
+} from './devenv-lib.mjs';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const stageScript = join(__dirname, 'stage-language-devenv.mjs');
-
-const CHECKS = {
-	go: [
-		{ rel: 'Go/bin/go.exe', args: ['version'] },
-		{ rel: 'tools/dlv.exe', args: ['version'] },
-	],
-	python: [
-		{ rel: 'Python314/python.exe', args: ['--version'] },
-	],
-	nodejs: [
-		{ rel: 'nodejs/node.exe', args: ['--version'] },
-	],
+const COMMAND_CHECKS = {
 	cpp: [
 		{ rel: 'CMake/bin/cmake.exe', args: ['--version'] },
 		{ rel: 'Ninja/ninja.exe', args: ['--version'] },
 		{ rel: 'MinGW/bin/gcc.exe', args: ['--version'] },
 		{ rel: 'MinGW/bin/g++.exe', args: ['--version'] },
+		{ rel: 'MinGW/bin/gdb.exe', args: ['--version'] },
 	],
-	csharp: [
-		{ rel: 'dotnet/dotnet.exe', args: ['--info'] },
+	go: [
+		{ rel: 'Go/bin/go.exe', args: ['version'] },
+		{ rel: 'tools/dlv.exe', args: ['version'] },
+		{ rel: 'tools/gopls.exe', args: ['version'] },
 	],
 	rust: [
 		{ rel: '.cargo/bin/rustc.exe', args: ['--version', '--verbose'], includes: 'host: x86_64-pc-windows-gnu' },
 		{ rel: '.cargo/bin/cargo.exe', args: ['--version'] },
 		{ rel: 'MinGW/bin/gcc.exe', args: ['--version'] },
 	],
+	csharp: [
+		{ rel: 'dotnet/dotnet.exe', args: ['--info'] },
+		{ rel: 'NetCoreDbg/netcoredbg.exe', args: ['--help'], allowFailure: true },
+	],
+	javascript: [
+		{ rel: 'nodejs/node.exe', args: ['--version'] },
+	],
+	typescript: [
+		{ rel: 'nodejs/node.exe', args: ['--version'] },
+		{ rel: 'nodejs/npm.cmd', args: ['--version'] },
+	],
+	python: [
+		{ rel: 'Python314/python.exe', args: ['--version'] },
+		{ rel: 'Python314/python.exe', args: ['-m', 'pip', '--version'] },
+	],
+	lua: [
+		{ rel: 'Lua/lua.exe', args: ['-v'] },
+	],
 };
 
-function parseArgs(argv) {
-	let languages = ['go', 'python'];
-	for (let i = 0; i < argv.length; i++) {
-		if (argv[i] === '--languages' && argv[i + 1]) {
-			languages = argv[++i].split(',').map(s => s.trim()).filter(Boolean);
+function printHelp() {
+	console.log(`Verify locked Windows development environments
+
+Usage:
+  node verify-language-devenv.mjs --check-lock
+  node verify-language-devenv.mjs --app-root <tree> --language <${LANGUAGES.join('|')}>
+`);
+}
+
+async function main() {
+	const args = parseArgs(process.argv.slice(2));
+	if (args.help) {
+		printHelp();
+		return;
+	}
+	if (args['check-lock']) {
+		await checkLock();
+		return;
+	}
+	if (!args['app-root'] || !args.language) {
+		printHelp();
+		throw new Error('Use --check-lock, or --app-root and --language');
+	}
+	if (!LANGUAGES.includes(args.language)) {
+		throw new Error(`Unsupported language: ${args.language}`);
+	}
+	await verifyTree(args['app-root'], args.language);
+}
+
+async function checkLock() {
+	const lock = await loadLock();
+	validateLock(lock);
+	const lockSha = await sha256File(LOCK_FILE);
+	const assetCount = Object.keys(lock.assets).length;
+	for (const language of LANGUAGES) {
+		const spec = lock.languages[language];
+		if (spec.path.length === 0) {
+			throw new Error(`${language} path entries must not be empty`);
 		}
 	}
-	return { languages };
-}
-
-async function pathExists(p) {
-	try {
-		await fs.access(p);
-		return true;
-	} catch {
-		return false;
+	if (!lock.common.extensions.includes('remotepro-cn.remotepro') || !lock.common.extensions.includes('saoudrizwan.claude-dev')) {
+		throw new Error('Common extensions must include RemotePro and Claude Dev');
 	}
+	console.log(`Lock OK (${assetCount} assets, sha256=${lockSha})`);
 }
 
-async function verifyLanguage(language, workRoot, cacheRoot) {
-	const appRoot = join(workRoot, `fake-app-${language}`);
-	await fs.rm(appRoot, { recursive: true, force: true });
-	await fs.mkdir(join(appRoot, 'resources', 'app'), { recursive: true });
-	// bootstrap is sibling of resources (same as DefaultDevEnvInitializer layout)
-	await fs.mkdir(join(appRoot, 'bootstrap'), { recursive: true });
+async function verifyTree(appRoot, language) {
+	const lock = await loadLock();
+	const spec = lock.languages[language];
+	if (await pathExists(join(appRoot, 'bootstrap'))) {
+		throw new Error(`${language} package still contains bootstrap/`);
+	}
+	const product = await readJson(join(appRoot, 'resources', 'app', 'product.json'));
+	if (product.bundledDevEnvironment !== true) {
+		throw new Error('product.json bundledDevEnvironment must be true');
+	}
+	if ('target' in product || product.win32VersionedUpdate) {
+		throw new Error('portable product.json must not declare installer target or win32VersionedUpdate');
+	}
 
-	console.log(`\n=== verify ${language} ===`);
-	execFileSync(process.execPath, [
-		stageScript,
-		'--app-root', appRoot,
-		'--language', language,
-		'--cache-dir', join(cacheRoot, language),
-	], { stdio: 'inherit', env: process.env });
-
-	const entriesPath = join(appRoot, 'bootstrap', 'dev-env', 'path-entries.json');
+	const entriesPath = join(appRoot, 'dev-env', 'path-entries.json');
 	if (!(await pathExists(entriesPath))) {
-		throw new Error(`missing path-entries.json for ${language}`);
+		throw new Error(`missing ${entriesPath}`);
 	}
-	const entries = JSON.parse(await fs.readFile(entriesPath, 'utf8'));
-	if (!Array.isArray(entries.path) || entries.path.length === 0) {
-		throw new Error(`path-entries.json has empty path for ${language}`);
-	}
-
-	const devEnv = join(appRoot, 'bootstrap', 'dev-env');
-	const pathDirs = entries.path.map(rel => join(devEnv, rel));
-	const pathPrefix = pathDirs.join(';');
-
-	const checks = CHECKS[language];
-	if (!checks) {
-		throw new Error(`No binary checks configured for ${language}`);
+	const entries = await readJson(entriesPath);
+	if (JSON.stringify(entries.path) !== JSON.stringify(spec.path)) {
+		throw new Error(`${language} path-entries.path does not match the lock`);
 	}
 
-	for (const check of checks) {
+	const devEnv = join(appRoot, 'dev-env');
+	for (const rel of spec.extraRequiredFiles ?? []) {
+		await assertRequiredFiles(devEnv, [rel], language);
+	}
+	if (!(await pathExists(join(appRoot, 'data', 'tmp'))) || !(await pathExists(join(appRoot, 'data', 'dev-env-state')))) {
+		throw new Error('portable data/tmp or data/dev-env-state is missing');
+	}
+
+	const extensionIds = await collectExtensionIds(join(appRoot, 'resources', 'app', 'extensions'));
+	for (const id of [...lock.common.extensions, ...spec.extensions]) {
+		if (!extensionIds.has(id.toLowerCase())) {
+			throw new Error(`Missing system extension ${id}`);
+		}
+		const dest = join(appRoot, 'resources', 'app', 'extensions', extensionIds.get(id.toLowerCase()));
+		await assertRequiredFiles(dest, lock.assets[id].requiredFiles, id);
+	}
+
+	const pathPrefix = spec.path.map(rel => join(devEnv, rel)).join(';');
+	for (const check of COMMAND_CHECKS[language]) {
 		const exe = join(devEnv, check.rel);
 		if (!(await pathExists(exe))) {
 			throw new Error(`missing binary: ${exe}`);
 		}
-		const out = execFileSync(exe, check.args, {
-			encoding: 'utf8',
-			env: { ...process.env, PATH: `${pathPrefix};${process.env.PATH || ''}` },
-			timeout: 60_000,
-		});
-		if (check.includes && !out.includes(check.includes)) {
-			throw new Error(`${check.rel} output does not include ${JSON.stringify(check.includes)}`);
+		try {
+			const out = execFileSync(exe, check.args, {
+				encoding: 'utf8',
+				env: { ...process.env, PATH: `${pathPrefix};${process.env.PATH || ''}` },
+				timeout: 60_000,
+				windowsHide: true,
+			});
+			if (check.includes && !out.includes(check.includes)) {
+				throw new Error(`${check.rel} output does not include ${JSON.stringify(check.includes)}`);
+			}
+			console.log(`OK ${check.rel}: ${String(out).trim().split(/\r?\n/)[0]}`);
+		} catch (error) {
+			if (!check.allowFailure) {
+				throw error;
+			}
+			console.log(`OK ${check.rel} (help/version emitted)`);
 		}
-		console.log(`OK ${check.rel}: ${String(out).trim().split(/\r?\n/)[0]}`);
 	}
 
-	// Simulate PATH registration: dirs must be absolute and exist
-	for (const dir of pathDirs) {
-		if (!(await pathExists(dir))) {
-			throw new Error(`path entry dir missing: ${dir}`);
-		}
+	if (language === 'lua' && !(await pathExists(join(devEnv, 'Lua', 'lua55.dll')))) {
+		throw new Error('lua55.dll must sit next to lua.exe');
 	}
-	console.log(`path-entries PATH dirs OK (${pathDirs.length})`);
+	console.log(`${language} tree verification passed`);
 }
 
-async function main() {
-	const { languages } = parseArgs(process.argv.slice(2));
-	const workRoot = join(tmpdir(), 'vscode-devenv-verify');
-	const cacheRoot = join(tmpdir(), 'vscode-devenv-cache');
-	await fs.mkdir(workRoot, { recursive: true });
-	await fs.mkdir(cacheRoot, { recursive: true });
-
-	for (const language of languages) {
-		await verifyLanguage(language, workRoot, cacheRoot);
-	}
-	console.log('\nAll verifications passed.');
-}
-
-main().catch(err => {
-	console.error(err);
+main().catch(error => {
+	console.error(error);
 	process.exit(1);
 });

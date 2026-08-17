@@ -1,0 +1,35 @@
+{
+  "name": "vscode-packaged-devenv-integration",
+  "displayName": "Packaged DevEnv Integration",
+  "version": "0.0.1",
+  "private": true,
+  "publisher": "vscode-integration",
+  "engines": {
+    "vscode": "^1.106.0"
+  },
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "*"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "packagedDevenv.run",
+        "title": "Run Packaged DevEnv Integration"
+      },
+      {
+        "command": "packagedDevenv.launchPeer",
+        "title": "Launch Packaged DevEnv Peer"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "check": "tsc -p ./ --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "1.106.0",
+    "typescript": "^5.3.3"
+  }
+}

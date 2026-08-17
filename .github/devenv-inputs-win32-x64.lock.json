@@ -1,0 +1,614 @@
+{
+	"schemaVersion": 1,
+	"platform": "win32-x64",
+	"lockedAt": "2026-08-17",
+	"assets": {
+		"remotepro-cn.remotepro": {
+			"id": "remotepro-cn.remotepro",
+			"kind": "vsix",
+			"version": "1.4.1",
+			"platform": "win32-x64",
+			"targetPlatform": "universal",
+			"url": "https://github.com/GitNerva9202/openclaw/releases/download/v1.4.1/remotepro-1.4.1.vsix",
+			"sha256": "a75ebbfc6caeaa7041b6692ddeb357b6cafcd0ec1d2b453900800e9abf040e6a",
+			"requiredFiles": [
+				"package.json",
+				"out/extension.js"
+			],
+			"extensionDependencies": []
+		},
+		"saoudrizwan.claude-dev": {
+			"id": "saoudrizwan.claude-dev",
+			"kind": "vsix",
+			"version": "4.1.2",
+			"platform": "win32-x64",
+			"targetPlatform": "universal",
+			"url": "https://github.com/cline/cline/releases/download/v4.1.2/claude-dev-4.1.2.vsix",
+			"sha256": "67f252c683a385ed4dd3dbe0d4860099974c582b965499f500fbcbbc733d2e92",
+			"requiredFiles": [
+				"package.json",
+				"dist/extension.js"
+			],
+			"extensionDependencies": []
+		},
+		"cmake": {
+			"id": "cmake",
+			"kind": "archive",
+			"version": "4.4.2",
+			"platform": "win32-x64",
+			"url": "https://cmake.org/files/v4.4/cmake-4.4.2-windows-x86_64.zip",
+			"sha256": "e8139d85b3813bc38833142ae1940472e9a587e9b5d2718ac1804c60f4e57a64",
+			"dest": "CMake",
+			"flatten": true,
+			"requiredFiles": [
+				"bin/cmake.exe"
+			],
+			"extensionDependencies": []
+		},
+		"ninja": {
+			"id": "ninja",
+			"kind": "archive",
+			"version": "1.13.2",
+			"platform": "win32-x64",
+			"url": "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-win.zip",
+			"sha256": "07fc8261b42b20e71d1720b39068c2e14ffcee6396b76fb7a795fb460b78dc65",
+			"dest": "Ninja",
+			"flatten": true,
+			"requiredFiles": [
+				"ninja.exe"
+			],
+			"extensionDependencies": []
+		},
+		"mingw": {
+			"id": "mingw",
+			"kind": "archive",
+			"version": "16.2.0posix-14.0.0-ucrt-r1",
+			"platform": "win32-x64",
+			"url": "https://github.com/brechtsanders/winlibs_mingw/releases/download/16.2.0posix-14.0.0-ucrt-r1/winlibs-x86_64-posix-seh-gcc-16.2.0-mingw-w64ucrt-14.0.0-r1.zip",
+			"sha256": "c1f52294597c0b73786b2a78eb5d176d89226d2f21875eab75e783a8b1cefcc4",
+			"dest": "MinGW",
+			"flatten": true,
+			"requiredFiles": [
+				"bin/gcc.exe",
+				"bin/g++.exe",
+				"bin/gdb.exe"
+			],
+			"extensionDependencies": []
+		},
+		"go": {
+			"id": "go",
+			"kind": "archive",
+			"version": "1.26.6",
+			"platform": "win32-x64",
+			"url": "https://go.dev/dl/go1.26.6.windows-amd64.zip",
+			"sha256": "5b6c5b556525810463b5c897b50dc7a82d6a3dc0bfaf55d990a7e9f31d6b2318",
+			"dest": "Go",
+			"flatten": true,
+			"requiredFiles": [
+				"bin/go.exe"
+			],
+			"extensionDependencies": []
+		},
+		"dlv": {
+			"id": "dlv",
+			"kind": "go-module",
+			"version": "v1.27.1",
+			"platform": "win32-x64",
+			"module": "github.com/go-delve/delve",
+			"install": "github.com/go-delve/delve/cmd/dlv",
+			"url": "https://github.com/go-delve/delve/archive/refs/tags/v1.27.1.zip",
+			"sha256": "fe24df22c0b2da45bcffcdb705b1695192461ca29631c77cc59abc1a7ff52e80",
+			"requiredFiles": [
+				"dlv.exe"
+			],
+			"extensionDependencies": []
+		},
+		"gopls": {
+			"id": "gopls",
+			"kind": "go-module",
+			"version": "v0.23.0",
+			"platform": "win32-x64",
+			"module": "golang.org/x/tools/gopls",
+			"install": "golang.org/x/tools/gopls",
+			"url": "https://codeload.github.com/golang/tools/zip/refs/tags/gopls/v0.23.0",
+			"sha256": "7755aeeaf6426954c71b38f845e900a06fc37552663c762201bb0b66dd103d5b",
+			"requiredFiles": [
+				"gopls.exe"
+			],
+			"extensionDependencies": []
+		},
+		"nodejs": {
+			"id": "nodejs",
+			"kind": "archive",
+			"version": "24.19.0",
+			"platform": "win32-x64",
+			"url": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-win-x64.zip",
+			"sha256": "57f71ab3652e797d84acddc79c81cc9ff1c6ddb2a1974cdb83f00fee9bff4c73",
+			"dest": "nodejs",
+			"flatten": true,
+			"requiredFiles": [
+				"node.exe",
+				"npm.cmd"
+			],
+			"extensionDependencies": []
+		},
+		"python": {
+			"id": "python",
+			"kind": "archive",
+			"version": "3.14.7",
+			"platform": "win32-x64",
+			"url": "https://www.python.org/ftp/python/3.14.7/python-3.14.7-amd64.zip",
+			"sha256": "ac1a727a71738e11de80b76e975f9b8a258aea6412bfc31696b929d59c6aafd0",
+			"dest": "Python314",
+			"flatten": true,
+			"requiredFiles": [
+				"python.exe"
+			],
+			"extensionDependencies": []
+		},
+		"lua": {
+			"id": "lua",
+			"kind": "archive",
+			"version": "5.5",
+			"platform": "win32-x64",
+			"url": "https://remotepro.cn/lua-windows-x64.zip",
+			"sha256": "9af07c9be1dd23a20e3362a15382dcda18d21a66817ef0a52f182d4a476f3227",
+			"dest": "Lua",
+			"flatten": true,
+			"requiredFiles": [
+				"lua.exe",
+				"lua55.dll"
+			],
+			"extensionDependencies": []
+		},
+		"dotnet": {
+			"id": "dotnet",
+			"kind": "archive",
+			"version": "10.0.400",
+			"platform": "win32-x64",
+			"url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.400/dotnet-sdk-10.0.400-win-x64.zip",
+			"sha256": "83fbf0699a984d08063579b06edfc8c327af62234b1aaeeadc5d7ae7f5a0514a",
+			"dest": "dotnet",
+			"flatten": true,
+			"requiredFiles": [
+				"dotnet.exe"
+			],
+			"extensionDependencies": []
+		},
+		"netcoredbg": {
+			"id": "netcoredbg",
+			"kind": "archive",
+			"version": "3.2.0-1092",
+			"platform": "win32-x64",
+			"url": "https://github.com/Samsung/netcoredbg/releases/download/3.2.0-1092/netcoredbg-win64.zip",
+			"sha256": "3c410a45fa502415203a94fcb88654af65bf8e3dac158a5527a722e7a6b9274a",
+			"dest": "NetCoreDbg",
+			"flatten": true,
+			"requiredFiles": [
+				"netcoredbg.exe"
+			],
+			"extensionDependencies": []
+		},
+		"rustup-init": {
+			"id": "rustup-init",
+			"kind": "binary",
+			"version": "1.29.0",
+			"platform": "win32-x64",
+			"url": "https://static.rust-lang.org/rustup/archive/1.29.0/x86_64-pc-windows-msvc/rustup-init.exe",
+			"sha256": "86478e53f769379d7f0ebfa7c9aa97cb76ca92233f79aa2cc0dbee2efaac73c7",
+			"requiredFiles": [
+				"rustup-init.exe"
+			],
+			"extensionDependencies": []
+		},
+		"golang.go": {
+			"id": "golang.go",
+			"kind": "vsix",
+			"version": "0.57.0",
+			"platform": "win32-x64",
+			"targetPlatform": "universal",
+			"url": "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/golang/vsextensions/go/0.57.0/vspackage",
+			"sha256": "ab7627453d42c83e7f94b437b087b05b8c8690119b199c53ae771e002ebea8c5",
+			"requiredFiles": [
+				"package.json",
+				"dist/goMain.js"
+			],
+			"extensionDependencies": []
+		},
+		"ms-vscode.cpptools": {
+			"id": "ms-vscode.cpptools",
+			"kind": "vsix",
+			"version": "1.32.2",
+			"platform": "win32-x64",
+			"targetPlatform": "win32-x64",
+			"url": "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-vscode/vsextensions/cpptools/1.32.2/vspackage?targetPlatform=win32-x64",
+			"sha256": "e6060d4fd4dd34f7e8519bbdeba6338636139562e6d5b534ca6fe22702d04ee7",
+			"requiredFiles": [
+				"package.json",
+				"bin/cpptools.exe",
+				"debugAdapters/bin/OpenDebugAD7.exe",
+				"debugAdapters/bin/WindowsDebugLauncher.exe"
+			],
+			"extensionDependencies": []
+		},
+		"ms-vscode.cmake-tools": {
+			"id": "ms-vscode.cmake-tools",
+			"kind": "vsix",
+			"version": "1.24.30",
+			"platform": "win32-x64",
+			"targetPlatform": "universal",
+			"url": "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-vscode/vsextensions/cmake-tools/1.24.30/vspackage",
+			"sha256": "993d01b3eea3d3fa006cc3c2cdbec169844e336e9b212f3633878d4d6559b126",
+			"requiredFiles": [
+				"package.json",
+				"dist/main.js"
+			],
+			"extensionDependencies": []
+		},
+		"ms-dotnettools.vscode-dotnet-runtime": {
+			"id": "ms-dotnettools.vscode-dotnet-runtime",
+			"kind": "vsix",
+			"version": "3.1.0",
+			"platform": "win32-x64",
+			"targetPlatform": "universal",
+			"url": "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-dotnettools/vsextensions/vscode-dotnet-runtime/3.1.0/vspackage",
+			"sha256": "8e675ffe5f3674430d63e28d2dc05ab40f36c8494e9549e79d3995d721b13f5a",
+			"requiredFiles": [
+				"package.json",
+				"dist/extension.js"
+			],
+			"extensionDependencies": []
+		},
+		"ms-dotnettools.csharp": {
+			"id": "ms-dotnettools.csharp",
+			"kind": "vsix",
+			"version": "2.148.23",
+			"platform": "win32-x64",
+			"targetPlatform": "win32-x64",
+			"url": "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-dotnettools/vsextensions/csharp/2.148.23/vspackage?targetPlatform=win32-x64",
+			"sha256": "27cf5f0fdcd677f7af61a6d43f2dc75bac7ca2cffa1f29e3262b615bbcabb952",
+			"requiredFiles": [
+				"package.json",
+				"dist/extension.js"
+			],
+			"extensionDependencies": [
+				"ms-dotnettools.vscode-dotnet-runtime"
+			]
+		},
+		"ms-python.python": {
+			"id": "ms-python.python",
+			"kind": "vsix",
+			"version": "2026.4.0",
+			"platform": "win32-x64",
+			"targetPlatform": "win32-x64",
+			"url": "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-python/vsextensions/python/2026.4.0/vspackage?targetPlatform=win32-x64",
+			"sha256": "c877195e39d5fe88fc8416efbf3b2c5dbd576000bf624dc22821fc26fa112079",
+			"requiredFiles": [
+				"package.json",
+				"out/client/extension.js"
+			],
+			"extensionDependencies": []
+		},
+		"ms-python.debugpy": {
+			"id": "ms-python.debugpy",
+			"kind": "vsix",
+			"version": "2026.6.0",
+			"platform": "win32-x64",
+			"targetPlatform": "win32-x64",
+			"url": "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-python/vsextensions/debugpy/2026.6.0/vspackage?targetPlatform=win32-x64",
+			"sha256": "f38c4fd6fe801274c0be4df5d3451607bca4d839aaebf66022aa0a6481f7686e",
+			"requiredFiles": [
+				"package.json",
+				"dist/extension.js"
+			],
+			"extensionDependencies": [
+				"ms-python.python"
+			]
+		},
+		"detachhead.basedpyright": {
+			"id": "detachhead.basedpyright",
+			"kind": "vsix",
+			"version": "1.39.10",
+			"platform": "win32-x64",
+			"targetPlatform": "universal",
+			"url": "https://open-vsx.org/api/detachhead/basedpyright/1.39.10/file/detachhead.basedpyright-1.39.10.vsix",
+			"sha256": "8ef856b48f28ad310a4ff3597fe003ce2d8165418df6c6489848bb52e6898f38",
+			"requiredFiles": [
+				"package.json",
+				"dist/extension.js",
+				"dist/server.js"
+			],
+			"extensionDependencies": []
+		},
+		"actboy168.lua-debug": {
+			"id": "actboy168.lua-debug",
+			"kind": "vsix",
+			"version": "2.3.0",
+			"platform": "win32-x64",
+			"targetPlatform": "win32-x64",
+			"url": "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/actboy168/vsextensions/lua-debug/2.3.0/vspackage?targetPlatform=win32-x64",
+			"sha256": "a2b609e1e2e9d1f196a890a14750cd672341cc93dfe285a169218367e4bdaf4d",
+			"requiredFiles": [
+				"package.json",
+				"js/extension.js",
+				"bin/lua-debug.exe"
+			],
+			"extensionDependencies": []
+		},
+		"sumneko.lua": {
+			"id": "sumneko.lua",
+			"kind": "vsix",
+			"version": "3.19.1",
+			"platform": "win32-x64",
+			"targetPlatform": "win32-x64",
+			"url": "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/sumneko/vsextensions/lua/3.19.1/vspackage?targetPlatform=win32-x64",
+			"sha256": "c0a7489ad58358ddf2590f6782c94fa9308076b73aaa30b456932373b0d8cb28",
+			"requiredFiles": [
+				"package.json",
+				"client/out/src/extension.js",
+				"server/bin/lua-language-server.exe"
+			],
+			"extensionDependencies": []
+		},
+		"rust-lang.rust-analyzer": {
+			"id": "rust-lang.rust-analyzer",
+			"kind": "vsix",
+			"version": "0.3.3008",
+			"platform": "win32-x64",
+			"targetPlatform": "win32-x64",
+			"url": "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/rust-lang/vsextensions/rust-analyzer/0.3.3008/vspackage?targetPlatform=win32-x64",
+			"sha256": "4b8bb8ec7672ee77f81ba7baf6d7bcd26201cf485ed842906918baf1ec85aa21",
+			"requiredFiles": [
+				"package.json",
+				"out/main.js",
+				"server/rust-analyzer.exe"
+			],
+			"extensionDependencies": []
+		},
+		"vadimcn.vscode-lldb": {
+			"id": "vadimcn.vscode-lldb",
+			"kind": "vsix",
+			"version": "1.12.2",
+			"platform": "win32-x64",
+			"targetPlatform": "win32-x64",
+			"url": "https://github.com/vadimcn/codelldb/releases/download/v1.12.2/codelldb-win32-x64.vsix",
+			"sha256": "aa3f45175da3850973632fef1a1af0ed2382866bfd3dcd836544973831388a25",
+			"requiredFiles": [
+				"package.json",
+				"adapter/codelldb.exe",
+				"lldb/bin/lldb.exe"
+			],
+			"extensionDependencies": []
+		}
+	},
+	"common": {
+		"extensions": [
+			"remotepro-cn.remotepro",
+			"saoudrizwan.claude-dev"
+		]
+	},
+	"languages": {
+		"cpp": {
+			"tools": [
+				"cmake",
+				"ninja",
+				"mingw"
+			],
+			"extensions": [
+				"ms-vscode.cpptools",
+				"ms-vscode.cmake-tools"
+			],
+			"path": [
+				"CMake/bin",
+				"Ninja",
+				"MinGW/bin"
+			],
+			"env": {},
+			"state": {},
+			"values": {},
+			"extraRequiredFiles": [
+				"CMake/bin/cmake.exe",
+				"Ninja/ninja.exe",
+				"MinGW/bin/gcc.exe",
+				"MinGW/bin/g++.exe",
+				"MinGW/bin/gdb.exe"
+			],
+			"settings": {
+				"C_Cpp.intelliSenseEngine": "default",
+				"cmake.configureOnOpen": false
+			}
+		},
+		"go": {
+			"tools": [
+				"go"
+			],
+			"modules": [
+				"dlv",
+				"gopls"
+			],
+			"extensions": [
+				"golang.go"
+			],
+			"path": [
+				"Go/bin",
+				"tools"
+			],
+			"env": {
+				"GOROOT": "Go"
+			},
+			"state": {
+				"GOPATH": "go",
+				"GOCACHE": "go/cache",
+				"GOMODCACHE": "go/pkg/mod"
+			},
+			"values": {
+				"GOTOOLCHAIN": "local"
+			},
+			"extraRequiredFiles": [
+				"Go/bin/go.exe",
+				"tools/dlv.exe",
+				"tools/gopls.exe"
+			],
+			"settings": {
+				"go.toolsManagement.checkForUpdates": "off",
+				"go.toolsManagement.autoUpdate": false,
+				"go.useLanguageServer": true
+			}
+		},
+		"rust": {
+			"tools": [
+				"rustup-init",
+				"mingw"
+			],
+			"rustToolchain": "1.97.1-x86_64-pc-windows-gnu",
+			"rustupProfile": "minimal",
+			"rustupComponents": [
+				"rust-src"
+			],
+			"extensions": [
+				"rust-lang.rust-analyzer",
+				"vadimcn.vscode-lldb"
+			],
+			"path": [
+				".cargo/bin",
+				"MinGW/bin"
+			],
+			"env": {
+				"CARGO_HOME": ".cargo",
+				"RUSTUP_HOME": ".rustup"
+			},
+			"state": {},
+			"values": {
+				"RUSTUP_AUTO_INSTALL": "0"
+			},
+			"extraRequiredFiles": [
+				".cargo/bin/rustc.exe",
+				".cargo/bin/cargo.exe",
+				".cargo/bin/rustup.exe",
+				"MinGW/bin/gcc.exe"
+			],
+			"settings": {
+				"rust-analyzer.checkOnSave": true
+			}
+		},
+		"csharp": {
+			"tools": [
+				"dotnet",
+				"netcoredbg"
+			],
+			"extensions": [
+				"ms-dotnettools.vscode-dotnet-runtime",
+				"ms-dotnettools.csharp"
+			],
+			"path": [
+				"dotnet",
+				"NetCoreDbg"
+			],
+			"env": {
+				"DOTNET_ROOT": "dotnet"
+			},
+			"state": {
+				"DOTNET_CLI_HOME": "dotnet/cli",
+				"NUGET_PACKAGES": "nuget/packages",
+				"NUGET_HTTP_CACHE_PATH": "nuget/http-cache"
+			},
+			"values": {
+				"DOTNET_MULTILEVEL_LOOKUP": "0",
+				"DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+				"DOTNET_NOLOGO": "1",
+				"DOTNET_GENERATE_ASPNET_CERTIFICATE": "false",
+				"DOTNET_SKIP_FIRST_TIME_EXPERIENCE": "1"
+			},
+			"extraRequiredFiles": [
+				"dotnet/dotnet.exe",
+				"NetCoreDbg/netcoredbg.exe"
+			],
+			"settings": {
+				"dotnetAcquisitionExtension.existingDotnetPath": []
+			}
+		},
+		"javascript": {
+			"tools": [
+				"nodejs"
+			],
+			"extensions": [],
+			"path": [
+				"nodejs"
+			],
+			"env": {},
+			"state": {},
+			"values": {},
+			"extraRequiredFiles": [
+				"nodejs/node.exe"
+			],
+			"settings": {}
+		},
+		"typescript": {
+			"tools": [
+				"nodejs"
+			],
+			"extensions": [],
+			"path": [
+				"nodejs"
+			],
+			"env": {},
+			"state": {},
+			"values": {},
+			"extraRequiredFiles": [
+				"nodejs/node.exe",
+				"nodejs/npm.cmd"
+			],
+			"settings": {}
+		},
+		"python": {
+			"tools": [
+				"python"
+			],
+			"extensions": [
+				"ms-python.python",
+				"ms-python.debugpy",
+				"detachhead.basedpyright"
+			],
+			"path": [
+				"Python314",
+				"Python314/Scripts"
+			],
+			"env": {},
+			"state": {
+				"PYTHONUSERBASE": "python/user",
+				"PIP_CACHE_DIR": "python/pip-cache",
+				"PYTHONPYCACHEPREFIX": "python/pycache"
+			},
+			"values": {
+				"PYTHONUTF8": "1",
+				"PIP_DISABLE_PIP_VERSION_CHECK": "1"
+			},
+			"extraRequiredFiles": [
+				"Python314/python.exe"
+			],
+			"settings": {
+				"python.terminal.activateEnvironment": false
+			}
+		},
+		"lua": {
+			"tools": [
+				"lua"
+			],
+			"extensions": [
+				"actboy168.lua-debug",
+				"sumneko.lua"
+			],
+			"path": [
+				"Lua"
+			],
+			"env": {},
+			"state": {},
+			"values": {},
+			"extraRequiredFiles": [
+				"Lua/lua.exe",
+				"Lua/lua55.dll"
+			],
+			"settings": {}
+		}
+	}
+}

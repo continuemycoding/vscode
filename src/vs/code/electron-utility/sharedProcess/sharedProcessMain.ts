@@ -125,8 +125,6 @@ import { getOSReleaseInfo } from '../../../base/node/osReleaseInfo.js';
 import { getDesktopEnvironment } from '../../../base/common/desktopEnvironmentInfo.js';
 import { getCodeDisplayProtocol, getDisplayProtocol } from '../../../base/node/osDisplayProtocolInfo.js';
 import { RequestService } from '../../../platform/request/electron-utility/requestService.js';
-import { DefaultExtensionsInitializer } from './contrib/defaultExtensionsInitializer.js';
-import { DefaultDevEnvInitializer } from './contrib/defaultDevEnvInitializer.js';
 import { AllowedExtensionsService } from '../../../platform/extensionManagement/common/allowedExtensionsService.js';
 import { IExtensionGalleryManifestService } from '../../../platform/extensionManagement/common/extensionGalleryManifest.js';
 import { ExtensionGalleryManifestIPCService } from '../../../platform/extensionManagement/common/extensionGalleryManifestServiceIpc.js';
@@ -210,9 +208,7 @@ class SharedProcessMain extends Disposable implements IClientConnectionFilter {
 			instantiationService.createInstance(LogsDataCleaner),
 			instantiationService.createInstance(LocalizationsUpdater),
 			instantiationService.createInstance(ExtensionsContributions),
-			instantiationService.createInstance(UserDataProfilesCleaner),
-			instantiationService.createInstance(DefaultExtensionsInitializer),
-			instantiationService.createInstance(DefaultDevEnvInitializer)
+			instantiationService.createInstance(UserDataProfilesCleaner)
 		));
 	}
 

@@ -7,6 +7,7 @@ import { timeout } from '../../../../base/common/async.js';
 import { encodeBase64, VSBuffer } from '../../../../base/common/buffer.js';
 import { CancellationError } from '../../../../base/common/errors.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
+import { dirname, join } from '../../../../base/common/path.js';
 import { Disposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import * as objects from '../../../../base/common/objects.js';
 import * as platform from '../../../../base/common/platform.js';
@@ -26,6 +27,7 @@ import { INativeHostService } from '../../../../platform/native/common/native.js
 import { INotificationService, NotificationPriority, Severity } from '../../../../platform/notification/common/notification.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { IWorkbenchAssignmentService } from '../../assignment/common/assignmentService.js';
+import { Promises } from '../../../../base/node/pfs.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
 import { isLoggingOnly } from '../../../../platform/telemetry/common/telemetryUtils.js';
 import { IUserDataProfilesService } from '../../../../platform/userDataProfile/common/userDataProfile.js';
@@ -238,6 +240,23 @@ export class NativeLocalProcessExtensionHost extends Disposable implements IExte
 			objects.mixin(env, this._environmentService.debugExtensionHost.env);
 		}
 
+		delete env['VSCODE_BUNDLED_DEV_ENV_ROOT'];
+		delete env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'];
+		if (this._productService.bundledDevEnvironment) {
+			const bundledDevEnvironmentRoot = this._getBundledDevEnvironmentRoot();
+			if (await Promises.existsFile(join(bundledDevEnvironmentRoot, 'dev-env', 'path-entries.json'))) {
+				env['VSCODE_BUNDLED_DEV_ENV_ROOT'] = bundledDevEnvironmentRoot;
+				if (typeof process.env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'] === 'string') {
+					env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'] = process.env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'];
+				}
+				if (typeof process.env['PATH'] === 'string') {
+					env['PATH'] = process.env['PATH'];
+				} else if (typeof process.env['Path'] === 'string') {
+					env['Path'] = process.env['Path'];
+				}
+			}
+		}
+
 		removeDangerousEnvVariables(env);
 
 		if (this._isExtensionDevHost) {
@@ -379,6 +398,13 @@ export class NativeLocalProcessExtensionHost extends Disposable implements IExte
 		await this._performHandshake(protocol);
 		clearTimeout(startupTimeoutHandle);
 		return protocol;
+	}
+
+	private _getBundledDevEnvironmentRoot(): string {
+		if (this._productService.win32VersionedUpdate) {
+			return dirname(dirname(dirname(this._environmentService.appRoot)));
+		}
+		return dirname(dirname(this._environmentService.appRoot));
 	}
 
 	/**

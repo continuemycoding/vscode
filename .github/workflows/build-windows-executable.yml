@@ -1,45 +1,72 @@
 name: Build Windows desktop (executable)
 
 on:
+  pull_request:
   push:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'push' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch) && format('push-{0}', github.ref) || format('run-{0}-{1}', github.run_id, github.run_attempt)) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)) }}
 
 env:
   VSCODE_QUALITY: oss
   NPM_ARCH: x64
   VSCODE_ARCH: x64
+  LOCK_FILE: .github/devenv-inputs-win32-x64.lock.json
 
 jobs:
-  build:
-    name: Windows x64 package
-    runs-on: windows-2022
-    timeout-minutes: 360
+  check-lock:
+    name: Check development environment lock
+    runs-on: windows-2025
+    timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - name: Checkout controller
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          lfs: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: .nvmrc
+
+      - name: Verify locked inputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node .github/scripts/verify-language-devenv.mjs --check-lock
+          if ($LASTEXITCODE -ne 0) { throw "Lock verification failed: $LASTEXITCODE" }
+
+  build-base:
+    name: Build common Windows x64 base
+    needs: check-lock
+    runs-on: windows-2025
+    timeout-minutes: 330
+    steps:
+      - name: Checkout build source with LFS
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           lfs: true
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version-file: .nvmrc
 
       - name: Prepare node_modules cache key
         shell: pwsh
         run: |
-          mkdir .build -ea 0
-          node build/azure-pipelines/common/computeNodeModulesCacheKey.ts win32 ${{ env.VSCODE_ARCH }} $(node -p process.arch) > .build/packagelockhash
+          New-Item -ItemType Directory -Path .build -Force | Out-Null
+          node build/azure-pipelines/common/computeNodeModulesCacheKey.ts win32 $env:VSCODE_ARCH (node -p process.arch) > .build/packagelockhash
+          if ($LASTEXITCODE -ne 0) { throw "Computing node_modules cache key failed: $LASTEXITCODE" }
 
       - name: Restore node_modules cache
         id: cache-node-modules
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: .build/node_modules_cache
           key: node_modules-windows-${{ hashFiles('.build/packagelockhash') }}
@@ -47,32 +74,29 @@ jobs:
       - name: Extract node_modules cache
         if: steps.cache-node-modules.outputs.cache-hit == 'true'
         shell: pwsh
-        run: 7z.exe x .build/node_modules_cache/cache.7z -aoa
+        run: |
+          & 7z.exe x .build/node_modules_cache/cache.7z -aoa
+          if ($LASTEXITCODE -ne 0) { throw "Extracting node_modules cache failed: $LASTEXITCODE" }
 
       - name: Install dependencies
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           . build/azure-pipelines/win32/exec.ps1
-          $ErrorActionPreference = "Stop"
-
+          $ErrorActionPreference = 'Stop'
           for ($i = 1; $i -le 5; $i++) {
             try {
               exec { npm ci }
               break
-            }
-            catch {
-              if ($i -eq 5) {
-                Write-Error "npm ci failed after 5 attempts"
-                throw
-              }
+            } catch {
+              if ($i -eq 5) { throw "npm ci failed after 5 attempts: $_" }
               Write-Host "npm ci failed attempt $i, retrying..."
               Start-Sleep -Seconds 2
             }
           }
         env:
           npm_config_arch: ${{ env.NPM_ARCH }}
-          npm_config_foreground_scripts: "true"
+          npm_config_foreground_scripts: 'true'
           VSCODE_ARCH: ${{ env.VSCODE_ARCH }}
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
@@ -83,26 +107,27 @@ jobs:
         shell: pwsh
         run: |
           . build/azure-pipelines/win32/exec.ps1
-          $ErrorActionPreference = "Stop"
+          $ErrorActionPreference = 'Stop'
           exec { node build/azure-pipelines/common/listNodeModules.ts .build/node_modules_list.txt }
-          # 勿用 exec 包 cmdlet：新开 shell 时 $LASTEXITCODE 可能为 $null，会与 0 不相等而误杀（见 exec.ps1）。
           New-Item -ItemType Directory -Path .build/node_modules_cache -Force | Out-Null
           exec { 7z.exe a .build/node_modules_cache/cache.7z -mx3 `@.build/node_modules_list.txt }
 
       - name: Save node_modules cache
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: .build/node_modules_cache
           key: node_modules-windows-${{ hashFiles('.build/packagelockhash') }}
 
       - name: Prepare built-in extensions cache key
         shell: pwsh
-        run: node build/azure-pipelines/common/computeBuiltInDepsCacheKey.ts > .build/builtindepshash
+        run: |
+          node build/azure-pipelines/common/computeBuiltInDepsCacheKey.ts > .build/builtindepshash
+          if ($LASTEXITCODE -ne 0) { throw "Computing built-in extensions cache key failed: $LASTEXITCODE" }
 
       - name: Restore built-in extensions cache
         id: cache-builtin-extensions
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
         with:
           enableCrossOsArchive: true
           path: .build/builtInExtensions
@@ -110,39 +135,39 @@ jobs:
 
       - name: Download built-in extensions
         if: steps.cache-builtin-extensions.outputs.cache-hit != 'true'
-        run: node build/lib/builtInExtensions.ts
+        shell: pwsh
+        run: |
+          node build/lib/builtInExtensions.ts
+          if ($LASTEXITCODE -ne 0) { throw "Downloading built-in extensions failed: $LASTEXITCODE" }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Save built-in extensions cache
         if: steps.cache-builtin-extensions.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
         with:
           enableCrossOsArchive: true
           path: .build/builtInExtensions
           key: builtin-extensions-${{ hashFiles('.build/builtindepshash') }}
 
-      # 缓存已解压的 Electron + zip；命中时可跳过下载（core-ci-desktop 仍每次跑）。
       - name: Restore Electron cache
         id: cache-electron
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: |
             .build/electron
             .build/electron-cache
           key: electron-win32-${{ hashFiles('.npmrc') }}
 
-      # 不编译/打包内置 Copilot；prepareBuiltInCopilotRipgrepShim 在扩展缺失时会跳过。
-      # cache miss：Electron 下载与 core-ci-desktop 并行；cache hit：只跑 core-ci-desktop。
-      - name: Download Electron、core-ci-desktop
+      - name: Download Electron and compile min-ci core
         shell: pwsh
         run: |
           . build/azure-pipelines/win32/exec.ps1
-          $ErrorActionPreference = "Stop"
-          if ("${{ steps.cache-electron.outputs.cache-hit }}" -eq "true") {
+          $ErrorActionPreference = 'Stop'
+          if ('${{ steps.cache-electron.outputs.cache-hit }}' -eq 'true') {
             exec { npm run core-ci-desktop }
           } else {
-            exec { npm exec -- npm-run-all2 -lp "electron ${{ env.VSCODE_ARCH }}" core-ci-desktop }
+            exec { npm exec -- npm-run-all2 -lp "electron $env:VSCODE_ARCH" core-ci-desktop }
           }
         env:
           npm_config_arch: ${{ env.NPM_ARCH }}
@@ -152,150 +177,817 @@ jobs:
 
       - name: Save Electron cache
         if: steps.cache-electron.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: |
             .build/electron
             .build/electron-cache
           key: electron-win32-${{ hashFiles('.npmrc') }}
 
-      - name: 打包桌面客户端（vscode-win32-x64-min-ci）
+      - name: Package min-ci desktop client
         shell: pwsh
         run: |
           . build/azure-pipelines/win32/exec.ps1
-          $ErrorActionPreference = "Stop"
-          # Add Windows SDK to PATH for patchWin32DependenciesTask signtool usage.
-          $sdkBin = "C:\Program Files (x86)\Windows Kits\10\bin"
+          $ErrorActionPreference = 'Stop'
+          $sdkBin = 'C:\Program Files (x86)\Windows Kits\10\bin'
           $sdk = @(
-            (Join-Path $sdkBin "10.0.26100.0\x64")
+            (Join-Path $sdkBin '10.0.26100.0\x64')
             Get-ChildItem -LiteralPath $sdkBin -Directory -ErrorAction SilentlyContinue |
               Sort-Object Name -Descending |
-              ForEach-Object { Join-Path $_.FullName "x64" }
-          ) | Where-Object { Test-Path -LiteralPath (Join-Path $_ "signtool.exe") } |
-            Select-Object -First 1
-          if (-not $sdk) {
-            throw "signtool.exe not found under Windows Kits; install Windows SDK or update PATH."
-          }
-          Write-Host "Using Windows SDK signtool from: $sdk"
+              ForEach-Object { Join-Path $_.FullName 'x64' }
+          ) | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'signtool.exe') } | Select-Object -First 1
+          if (-not $sdk) { throw 'signtool.exe was not found under Windows Kits.' }
           $env:PATH = "$sdk;$env:PATH"
-          exec { npm run gulp "vscode-win32-${{ env.VSCODE_ARCH }}-min-ci" }
+          exec { npm run gulp "vscode-win32-$env:VSCODE_ARCH-min-ci" }
         env:
           npm_config_arch: ${{ env.NPM_ARCH }}
           VSCODE_ARCH: ${{ env.VSCODE_ARCH }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 构建期从 Marketplace 拉取简体中文语言包，烘焙 resources/app/nls.messages.json（首次启动即中文；不装进 bootstrap）。
       - name: Bake Simplified Chinese NLS
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          $out = (Resolve-Path "$env:GITHUB_WORKSPACE\..\VSCode-win32-$env:VSCODE_ARCH").Path
-          node .github/scripts/bake-zh-hans-nls.mjs --app-root $out
+          $ErrorActionPreference = 'Stop'
+          $appRoot = (Resolve-Path "$env:GITHUB_WORKSPACE\..\VSCode-win32-$env:VSCODE_ARCH").Path
+          node .github/scripts/bake-zh-hans-nls.mjs --app-root $appRoot
+          if ($LASTEXITCODE -ne 0) { throw "NLS baking failed: $LASTEXITCODE" }
 
-      # 首次启动由 DefaultExtensionsInitializer 安装 bootstrap/extensions/*.vsix（用户扩展，仅 Windows）。
-      - name: 下载预装 VSIX 到 bootstrap/extensions
+      - name: Stage locked common extensions
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          $out = (Resolve-Path "$env:GITHUB_WORKSPACE\..\VSCode-win32-$env:VSCODE_ARCH").Path
-          $dest = Join-Path $out "bootstrap\extensions"
-          New-Item -ItemType Directory -Force -Path $dest | Out-Null
-
-          $vsixUrls = @(
-            "https://gitee.com/RemotePro/RemotePro-vsix/releases/download/1.3.0/remotepro-1.3.0.vsix"
-            "https://gitcode.com/gcw_uHaLXrdK/Dopamine/releases/download/2.4.9/claude-dev-4.1.2.vsix"
-          )
-
-          foreach ($url in $vsixUrls) {
-            $name = Split-Path -Leaf ([Uri]$url).AbsolutePath
-            $file = Join-Path $dest $name
-            Write-Host "Downloading $url -> $file"
-            $ok = $false
-            for ($i = 1; $i -le 3; $i++) {
-              try {
-                Invoke-WebRequest -Uri $url -OutFile $file -UseBasicParsing
-                if ((Test-Path -LiteralPath $file) -and (Get-Item -LiteralPath $file).Length -ge 100) {
-                  $ok = $true
-                  break
-                }
-                throw "Empty or missing file after download"
-              }
-              catch {
-                if ($i -eq 3) { throw }
-                Write-Host "Download failed attempt $i, retrying... $_"
-                Start-Sleep -Seconds 5
-              }
-            }
-            if (-not $ok) {
-              throw "Failed or empty download: $url"
-            }
-            Write-Host ("Downloaded {0} ({1} bytes)" -f $name, (Get-Item -LiteralPath $file).Length)
-          }
-
-      # 产物在仓库上一级。先打基础树快照，再按语言扇出（工具链留在包内，首次启动只写 PATH）。
-      - name: 备份基础包并按语言扇出 ZIP
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $base = (Resolve-Path "$env:GITHUB_WORKSPACE\..\VSCode-win32-$env:VSCODE_ARCH").Path
-          $cache = Join-Path $env:GITHUB_WORKSPACE ".build\devenv-cache"
-          New-Item -ItemType Directory -Force -Path $cache | Out-Null
-          New-Item -ItemType Directory -Force -Path (Join-Path $env:GITHUB_WORKSPACE "dist") | Out-Null
-
-          $baseArchive = Join-Path $env:GITHUB_WORKSPACE ".build\VSCode-win32-$env:VSCODE_ARCH-base.7z"
-          if (Test-Path -LiteralPath $baseArchive) { Remove-Item -LiteralPath $baseArchive -Force }
-          Write-Host "Archiving base tree -> $baseArchive"
-          & 7z.exe a -t7z -mx3 $baseArchive "$base\*" | Out-Host
-          if ($LASTEXITCODE -ne 0) { throw "7z archive base failed: $LASTEXITCODE" }
-
-          $languages = @('go', 'python', 'nodejs', 'cpp', 'csharp', 'rust')
-          foreach ($lang in $languages) {
-            Write-Host "==== Staging language: $lang ===="
-            $outName = "VSCode-win32-$env:VSCODE_ARCH-$lang"
-            $outDir = Join-Path (Split-Path $base -Parent) $outName
-            if (Test-Path -LiteralPath $outDir) { Remove-Item -LiteralPath $outDir -Recurse -Force }
-            New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-            & 7z.exe x $baseArchive "-o$outDir" -aoa | Out-Host
-            if ($LASTEXITCODE -ne 0) { throw "7z extract base for $lang failed: $LASTEXITCODE" }
-
-            node .github/scripts/stage-language-devenv.mjs --app-root $outDir --language $lang --cache-dir (Join-Path $cache $lang)
-            if ($LASTEXITCODE -ne 0) { throw "stage-language-devenv failed for $lang" }
-
-            $zip = Join-Path $env:GITHUB_WORKSPACE "dist\$outName.zip"
-            if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
-            Write-Host "Zipping $outDir -> $zip"
-            # 保留顶层目录名（与历史 Compress-Archive 布局一致）
-            & 7z.exe a -tzip -mx5 $zip $outDir | Out-Host
-            if ($LASTEXITCODE -ne 0) { throw "7z zip $lang failed: $LASTEXITCODE" }
-
-            Remove-Item -LiteralPath $outDir -Recurse -Force
-            Write-Host ("Created {0} ({1:N0} bytes)" -f $zip, (Get-Item -LiteralPath $zip).Length)
-          }
+          $ErrorActionPreference = 'Stop'
+          $appRoot = (Resolve-Path "$env:GITHUB_WORKSPACE\..\VSCode-win32-$env:VSCODE_ARCH").Path
+          $cacheDir = Join-Path $env:GITHUB_WORKSPACE '.build\devenv-cache\common'
+          node .github/scripts/stage-language-devenv.mjs --app-root $appRoot --common-only --cache-dir $cacheDir --commit '${{ github.sha }}'
+          if ($LASTEXITCODE -ne 0) { throw "Common extension staging failed: $LASTEXITCODE" }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Enable bundled development environment capability
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $appRoot = (Resolve-Path "$env:GITHUB_WORKSPACE\..\VSCode-win32-$env:VSCODE_ARCH").Path
+          $productPath = Join-Path $appRoot 'resources\app\product.json'
+          $product = Get-Content -LiteralPath $productPath -Raw | ConvertFrom-Json
+          $product | Add-Member -NotePropertyName bundledDevEnvironment -NotePropertyValue $true -Force
+          $product | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $productPath -Encoding utf8NoBOM
+
+      - name: Archive base tree and record SHA
+        id: base
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $appRoot = (Resolve-Path "$env:GITHUB_WORKSPACE\..\VSCode-win32-$env:VSCODE_ARCH").Path
+          $dist = Join-Path $env:GITHUB_WORKSPACE 'dist-base'
+          New-Item -ItemType Directory -Path $dist -Force | Out-Null
+          $archive = Join-Path $dist 'VSCode-win32-x64-base.7z'
+          Push-Location (Split-Path $appRoot -Parent)
+          try {
+            & 7z.exe a -t7z -mx3 $archive (Split-Path $appRoot -Leaf)
+            if ($LASTEXITCODE -ne 0) { throw "Base archive creation failed: $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+          $sha = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sha | Set-Content -LiteralPath (Join-Path $dist 'VSCode-win32-x64-base.sha256') -Encoding ascii
+          "sha=$sha" >> $env:GITHUB_OUTPUT
+
+      - name: Upload base tree
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          tag_name: windows-oss-${{ github.run_id }}
-          name: Windows x64 OSS (${{ github.run_number }})
-          body: |
-            自动构建的 Windows x64 桌面版（按语言预装调试环境）。
-            - 提交: `${{ github.sha }}`
-            - 分支: `${{ github.ref_name }}`
+          name: windows-base-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist-base/VSCode-win32-x64-base.7z
+            dist-base/VSCode-win32-x64-base.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
 
-            ## 语言包
-            | 文件 | 预装内容 |
-            |------|----------|
-            | `VSCode-win32-x64-go.zip` | Go + Delve + Go 扩展 |
-            | `VSCode-win32-x64-python.zip` | Python 3.14 + Python / debugpy 扩展 |
-            | `VSCode-win32-x64-nodejs.zip` | Node.js LTS |
-            | `VSCode-win32-x64-cpp.zip` | CMake + Ninja + MinGW + C/C++ 扩展 |
-            | `VSCode-win32-x64-csharp.zip` | .NET 10 SDK + C# 扩展 |
-            | `VSCode-win32-x64-rust.zip` | Rust (GNU) + MinGW + rust-analyzer / CodeLLDB |
+  package:
+    name: Package ${{ matrix.language }}
+    needs: build-base
+    runs-on: windows-2025
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [cpp, go, rust, csharp, javascript, typescript, python, lua]
+    steps:
+      - name: Checkout controller
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          lfs: false
 
-            首次启动会把包内工具链目录写入用户 PATH（不联网、不拷贝），远控 Pro 即可直接探测到。
-          files: dist/VSCode-win32-${{ env.VSCODE_ARCH }}-*.zip
-          fail_on_unmatched_files: true
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: .nvmrc
+
+      - name: Download common base
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: windows-base-${{ github.run_id }}-${{ github.run_attempt }}
+          path: incoming-base
+
+      - name: Validate and extract common base
+        id: base
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:GITHUB_WORKSPACE 'incoming-base\VSCode-win32-x64-base.7z'
+          $expected = (Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'incoming-base\VSCode-win32-x64-base.sha256') -Raw).Trim().ToLowerInvariant()
+          if ($expected -notmatch '^[0-9a-f]{64}$') { throw "Invalid base SHA file: $expected" }
+          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "Base SHA mismatch: expected $expected, got $actual" }
+          $work = Join-Path $env:GITHUB_WORKSPACE 'package-work'
+          New-Item -ItemType Directory -Path $work -Force | Out-Null
+          & 7z.exe x $archive "-o$work" -aoa
+          if ($LASTEXITCODE -ne 0) { throw "Base archive extraction failed: $LASTEXITCODE" }
+          $appRoot = Join-Path $work 'VSCode-win32-x64'
+          if (-not (Test-Path -LiteralPath (Join-Path $appRoot 'Code.exe'))) { throw 'Extracted base is missing Code.exe.' }
+          "sha=$actual" >> $env:GITHUB_OUTPUT
+          "app-root=$appRoot" >> $env:GITHUB_OUTPUT
+
+      - name: Stage locked language environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $manifest = Join-Path $env:GITHUB_WORKSPACE 'dist\VSCode-win32-x64-${{ matrix.language }}.manifest.json'
+          $cacheDir = Join-Path $env:GITHUB_WORKSPACE '.build\devenv-cache\${{ matrix.language }}'
+          node .github/scripts/stage-language-devenv.mjs --app-root '${{ steps.base.outputs.app-root }}' --language '${{ matrix.language }}' --cache-dir $cacheDir --commit '${{ github.sha }}' --base-sha '${{ steps.base.outputs.sha }}' --manifest $manifest
+          if ($LASTEXITCODE -ne 0) { throw "Language staging failed: $LASTEXITCODE" }
+          New-Item -ItemType Directory -Path (Join-Path '${{ steps.base.outputs.app-root }}' 'data') -Force | Out-Null
+          if (-not (Test-Path -LiteralPath $manifest)) { throw "Stager did not create manifest: $manifest" }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create final language ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $appRoot = '${{ steps.base.outputs.app-root }}'
+          $language = '${{ matrix.language }}'
+          $finalName = "VSCode-win32-x64-$language"
+          $parent = Split-Path $appRoot -Parent
+          $finalRoot = Join-Path $parent $finalName
+          if (Test-Path -LiteralPath $finalRoot) { Remove-Item -LiteralPath $finalRoot -Recurse -Force }
+          Move-Item -LiteralPath $appRoot -Destination $finalRoot
+          $zip = Join-Path $env:GITHUB_WORKSPACE "dist\$finalName.zip"
+          Push-Location $parent
+          try {
+            & 7z.exe a -tzip -mx5 $zip $finalName
+            if ($LASTEXITCODE -ne 0) { throw "ZIP creation failed: $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+          $manifestPath = Join-Path $env:GITHUB_WORKSPACE "dist\$finalName.manifest.json"
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+          $lockSha = (Get-FileHash -LiteralPath $env:LOCK_FILE -Algorithm SHA256).Hash.ToLowerInvariant()
+          $zipSha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $zipSize = (Get-Item -LiteralPath $zip).Length
+          $manifest | Add-Member -NotePropertyName language -NotePropertyValue $language -Force
+          $manifest | Add-Member -NotePropertyName commit -NotePropertyValue '${{ github.sha }}' -Force
+          $manifest | Add-Member -NotePropertyName lockSha256 -NotePropertyValue $lockSha -Force
+          $manifest | Add-Member -NotePropertyName baseSha256 -NotePropertyValue '${{ steps.base.outputs.sha }}' -Force
+          $manifest | Add-Member -NotePropertyName zipSha256 -NotePropertyValue $zipSha -Force
+          $manifest | Add-Member -NotePropertyName zipSize -NotePropertyValue $zipSize -Force
+          $manifest | Add-Member -NotePropertyName zipName -NotePropertyValue "$finalName.zip" -Force
+          $manifest | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $manifestPath -Encoding utf8NoBOM
+
+      - name: Upload language ZIP
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-package-${{ matrix.language }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/VSCode-win32-x64-${{ matrix.language }}.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      - name: Upload language manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-manifest-${{ matrix.language }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/VSCode-win32-x64-${{ matrix.language }}.manifest.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  verify:
+    name: Verify ${{ matrix.language }} package
+    needs: package
+    runs-on: windows-2025
+    timeout-minutes: 80
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [cpp, go, rust, csharp, javascript, typescript, python, lua]
+    steps:
+      - name: Checkout controller
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          lfs: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: .nvmrc
+
+      - name: Build packaged test extension
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location .github/integration-tests/packaged-devenv
+          try {
+            npm ci
+            if ($LASTEXITCODE -ne 0) { throw "Test extension npm ci failed: $LASTEXITCODE" }
+            npm run compile --if-present
+            if ($LASTEXITCODE -ne 0) { throw "Test extension compile failed: $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Download exact language ZIP
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: windows-package-${{ matrix.language }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: packages/${{ matrix.language }}
+
+      - name: Run packaged verification
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path 'evidence\verify\${{ matrix.language }}' -Force | Out-Null
+          node .github/scripts/run-packaged-devenv-integration.mjs --mode verify --language '${{ matrix.language }}' --zip 'packages\${{ matrix.language }}\VSCode-win32-x64-${{ matrix.language }}.zip' --evidence-dir 'evidence\verify\${{ matrix.language }}' --timeout 3600000
+          if ($LASTEXITCODE -ne 0) { throw "Packaged verification failed: $LASTEXITCODE" }
+        env:
+          PACKAGED_DEVENV_TEST_TIMEOUT_MS: 3600000
+          PACKAGED_DEVENV_NETWORK_FIREWALL: 'true'
+
+      - name: Upload verify evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-evidence-verify-${{ matrix.language }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/verify/${{ matrix.language }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  verify-move:
+    name: Verify moved ${{ matrix.language }} package
+    needs: package
+    runs-on: windows-2025
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [cpp, go, rust, csharp, javascript, typescript, python, lua]
+    steps:
+      - name: Checkout controller
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          lfs: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: .nvmrc
+
+      - name: Build packaged test extension
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location .github/integration-tests/packaged-devenv
+          try {
+            npm ci
+            if ($LASTEXITCODE -ne 0) { throw "Test extension npm ci failed: $LASTEXITCODE" }
+            npm run compile --if-present
+            if ($LASTEXITCODE -ne 0) { throw "Test extension compile failed: $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Download exact language ZIP
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: windows-package-${{ matrix.language }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: packages/${{ matrix.language }}
+
+      - name: Run moved package verification
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path 'evidence\move\${{ matrix.language }}' -Force | Out-Null
+          node .github/scripts/run-packaged-devenv-integration.mjs --mode move --language '${{ matrix.language }}' --zip 'packages\${{ matrix.language }}\VSCode-win32-x64-${{ matrix.language }}.zip' --evidence-dir 'evidence\move\${{ matrix.language }}' --timeout 4200000
+          if ($LASTEXITCODE -ne 0) { throw "Moved package verification failed: $LASTEXITCODE" }
+        env:
+          PACKAGED_DEVENV_TEST_TIMEOUT_MS: 4200000
+          PACKAGED_DEVENV_NETWORK_FIREWALL: 'true'
+
+      - name: Upload move evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-evidence-move-${{ matrix.language }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/move/${{ matrix.language }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  replacement:
+    name: Replace ${{ matrix.pair }} package
+    needs: package
+    runs-on: windows-2025
+    timeout-minutes: 130
+    strategy:
+      fail-fast: false
+      matrix:
+        pair: [cpp:python, rust:javascript, typescript:go, csharp:lua]
+        include:
+          - pair: cpp:python
+            language_a: cpp
+            language_b: python
+          - pair: rust:javascript
+            language_a: rust
+            language_b: javascript
+          - pair: typescript:go
+            language_a: typescript
+            language_b: go
+          - pair: csharp:lua
+            language_a: csharp
+            language_b: lua
+    steps:
+      - name: Checkout controller
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          lfs: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: .nvmrc
+
+      - name: Build packaged test extension
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location .github/integration-tests/packaged-devenv
+          try {
+            npm ci
+            if ($LASTEXITCODE -ne 0) { throw "Test extension npm ci failed: $LASTEXITCODE" }
+            npm run compile --if-present
+            if ($LASTEXITCODE -ne 0) { throw "Test extension compile failed: $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Download package A
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: windows-package-${{ matrix.language_a }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: packages/${{ matrix.language_a }}
+
+      - name: Download package B
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: windows-package-${{ matrix.language_b }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: packages/${{ matrix.language_b }}
+
+      - name: Verify replacement with fresh data
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = 'evidence\replacement\${{ matrix.language_a }}-${{ matrix.language_b }}\preserve-false'
+          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+          node .github/scripts/run-packaged-devenv-integration.mjs --mode replacement --pair '${{ matrix.pair }}' --preserve-data false --zip-a 'packages\${{ matrix.language_a }}\VSCode-win32-x64-${{ matrix.language_a }}.zip' --zip-b 'packages\${{ matrix.language_b }}\VSCode-win32-x64-${{ matrix.language_b }}.zip' --evidence-dir $evidence --timeout 5400000
+          if ($LASTEXITCODE -ne 0) { throw "Fresh-data replacement failed: $LASTEXITCODE" }
+        env:
+          PACKAGED_DEVENV_TEST_TIMEOUT_MS: 5400000
+          PACKAGED_DEVENV_NETWORK_FIREWALL: 'true'
+
+      - name: Verify replacement preserving data
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = 'evidence\replacement\${{ matrix.language_a }}-${{ matrix.language_b }}\preserve-true'
+          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+          node .github/scripts/run-packaged-devenv-integration.mjs --mode replacement --pair '${{ matrix.pair }}' --preserve-data true --zip-a 'packages\${{ matrix.language_a }}\VSCode-win32-x64-${{ matrix.language_a }}.zip' --zip-b 'packages\${{ matrix.language_b }}\VSCode-win32-x64-${{ matrix.language_b }}.zip' --evidence-dir $evidence --timeout 5400000
+          if ($LASTEXITCODE -ne 0) { throw "Preserved-data replacement failed: $LASTEXITCODE" }
+        env:
+          PACKAGED_DEVENV_TEST_TIMEOUT_MS: 5400000
+          PACKAGED_DEVENV_NETWORK_FIREWALL: 'true'
+
+      - name: Upload replacement evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-evidence-replacement-${{ matrix.language_a }}-${{ matrix.language_b }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/replacement/${{ matrix.language_a }}-${{ matrix.language_b }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  concurrency:
+    name: Run ${{ matrix.pair }} concurrently
+    needs: package
+    runs-on: windows-2025
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      matrix:
+        pair: [cpp:python, rust:javascript, typescript:go, csharp:lua]
+        include:
+          - pair: cpp:python
+            language_a: cpp
+            language_b: python
+          - pair: rust:javascript
+            language_a: rust
+            language_b: javascript
+          - pair: typescript:go
+            language_a: typescript
+            language_b: go
+          - pair: csharp:lua
+            language_a: csharp
+            language_b: lua
+    steps:
+      - name: Checkout controller
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          lfs: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: .nvmrc
+
+      - name: Build packaged test extension
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location .github/integration-tests/packaged-devenv
+          try {
+            npm ci
+            if ($LASTEXITCODE -ne 0) { throw "Test extension npm ci failed: $LASTEXITCODE" }
+            npm run compile --if-present
+            if ($LASTEXITCODE -ne 0) { throw "Test extension compile failed: $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Download package A
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: windows-package-${{ matrix.language_a }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: packages/${{ matrix.language_a }}
+
+      - name: Download package B
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: windows-package-${{ matrix.language_b }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: packages/${{ matrix.language_b }}
+
+      - name: Verify concurrent isolation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = 'evidence\concurrency\${{ matrix.language_a }}-${{ matrix.language_b }}'
+          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+          node .github/scripts/run-packaged-devenv-integration.mjs --mode concurrency --pair '${{ matrix.pair }}' --zip-a 'packages\${{ matrix.language_a }}\VSCode-win32-x64-${{ matrix.language_a }}.zip' --zip-b 'packages\${{ matrix.language_b }}\VSCode-win32-x64-${{ matrix.language_b }}.zip' --evidence-dir $evidence --timeout 4200000
+          if ($LASTEXITCODE -ne 0) { throw "Concurrent isolation verification failed: $LASTEXITCODE" }
+        env:
+          PACKAGED_DEVENV_TEST_TIMEOUT_MS: 4200000
+          PACKAGED_DEVENV_NETWORK_FIREWALL: 'true'
+
+      - name: Upload concurrency evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-evidence-concurrency-${{ matrix.language_a }}-${{ matrix.language_b }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/concurrency/${{ matrix.language_a }}-${{ matrix.language_b }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  summarize:
+    name: Summarize package verification
+    if: always()
+    needs: [check-lock, build-base, package, verify, verify-move, replacement, concurrency]
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - name: Download all manifests
+        id: download-manifests
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: windows-manifest-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: collected/manifests
+          merge-multiple: false
+
+      - name: Download all verification evidence
+        id: download-evidence
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: windows-evidence-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: collected/evidence
+          merge-multiple: false
+
+      - name: Validate evidence and write summary
+        shell: pwsh
+        env:
+          NEED_CHECK_LOCK: ${{ needs.check-lock.result }}
+          NEED_BUILD_BASE: ${{ needs.build-base.result }}
+          NEED_PACKAGE: ${{ needs.package.result }}
+          NEED_VERIFY: ${{ needs.verify.result }}
+          NEED_VERIFY_MOVE: ${{ needs.verify-move.result }}
+          NEED_REPLACEMENT: ${{ needs.replacement.result }}
+          NEED_CONCURRENCY: ${{ needs.concurrency.result }}
+          MANIFEST_DOWNLOAD_OUTCOME: ${{ steps.download-manifests.outcome }}
+          EVIDENCE_DOWNLOAD_OUTCOME: ${{ steps.download-evidence.outcome }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $needResults = [ordered]@{
+            'check-lock' = $env:NEED_CHECK_LOCK
+            'build-base' = $env:NEED_BUILD_BASE
+            'package' = $env:NEED_PACKAGE
+            'verify' = $env:NEED_VERIFY
+            'verify-move' = $env:NEED_VERIFY_MOVE
+            'replacement' = $env:NEED_REPLACEMENT
+            'concurrency' = $env:NEED_CONCURRENCY
+          }
+          $problems = [System.Collections.Generic.List[string]]::new()
+          foreach ($entry in $needResults.GetEnumerator()) {
+            if ($entry.Value -ne 'success') { $problems.Add("Need $($entry.Key) finished as $($entry.Value)") }
+          }
+          if ($env:MANIFEST_DOWNLOAD_OUTCOME -ne 'success') { $problems.Add("Manifest download finished as $env:MANIFEST_DOWNLOAD_OUTCOME") }
+          if ($env:EVIDENCE_DOWNLOAD_OUTCOME -ne 'success') { $problems.Add("Evidence download finished as $env:EVIDENCE_DOWNLOAD_OUTCOME") }
+
+          $allFiles = if (Test-Path -LiteralPath collected) { @(Get-ChildItem -LiteralPath collected -File -Recurse) } else { @() }
+          $jsonFiles = @($allFiles | Where-Object Extension -EQ '.json')
+          $manifests = @($jsonFiles | Where-Object Name -Like '*.manifest.json')
+          $resultFiles = @($jsonFiles | Where-Object Name -EQ 'result.json')
+          $resultRecords = [System.Collections.Generic.List[object]]::new()
+          foreach ($file in $resultFiles) {
+            try {
+              $json = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+              $mode = [string]$json.mode
+              if (-not $mode -and $json.PSObject.Properties.Name -contains 'testMode') { $mode = [string]$json.testMode }
+              if ($mode -in @('verify', 'move', 'replacement', 'concurrency')) {
+                $status = if ($json.PSObject.Properties.Name -contains 'status') { [string]$json.status } elseif ($json.PSObject.Properties.Name -contains 'success') { if ($json.success) { 'passed' } else { 'failed' } } else { '' }
+                $duration = if ($json.PSObject.Properties.Name -contains 'durationMs') { [long]$json.durationMs } else { 0 }
+                $resultRecords.Add([pscustomobject]@{ Mode = $mode; Status = $status.ToLowerInvariant(); DurationMs = $duration; Path = $file.FullName })
+              }
+            } catch {
+              $problems.Add("Invalid JSON evidence $($file.FullName): $_")
+            }
+          }
+
+          $counts = [ordered]@{
+            manifests = $manifests.Count
+            verify = @($resultRecords | Where-Object Mode -EQ 'verify').Count
+            move = @($resultRecords | Where-Object Mode -EQ 'move').Count
+            replacement = @($resultRecords | Where-Object Mode -EQ 'replacement').Count
+            concurrency = @($resultRecords | Where-Object Mode -EQ 'concurrency').Count
+          }
+          $expectedCounts = [ordered]@{ manifests = 8; verify = 8; move = 8; replacement = 8; concurrency = 4 }
+          foreach ($key in $expectedCounts.Keys) {
+            if ($counts[$key] -ne $expectedCounts[$key]) { $problems.Add("Expected $($expectedCounts[$key]) $key records, found $($counts[$key])") }
+          }
+          foreach ($record in $resultRecords) {
+            if ($record.Status -notin @('passed', 'pass', 'success', 'succeeded')) { $problems.Add("Failing or unknown result in $($record.Path): $($record.Status)") }
+          }
+
+          $xmlFiles = @($allFiles | Where-Object Extension -EQ '.xml')
+          if ($xmlFiles.Count -ne 28) { $problems.Add("Expected 28 JUnit files, found $($xmlFiles.Count)") }
+          foreach ($file in $xmlFiles) {
+            try {
+              [xml]$xml = Get-Content -LiteralPath $file.FullName -Raw
+              $failures = @($xml.SelectNodes('//failure | //error')).Count
+              if ($failures -gt 0) { $problems.Add("JUnit failures in $($file.FullName): $failures") }
+              $testSuites = @($xml.SelectNodes('//testsuite'))
+              if ($testSuites.Count -eq 0) { $problems.Add("JUnit has no testsuite in $($file.FullName)") }
+              foreach ($suite in $testSuites) {
+                if ([int64]$suite.failures -gt 0 -or [int64]$suite.errors -gt 0) { $problems.Add("JUnit suite reports failure in $($file.FullName)") }
+              }
+            } catch {
+              $problems.Add("Invalid JUnit XML $($file.FullName): $_")
+            }
+          }
+
+          $summary = [System.Collections.Generic.List[string]]::new()
+          $summary.Add('# Windows packaged development environments')
+          $summary.Add('')
+          $summary.Add("Run `${{ github.run_id }}` attempt `${{ github.run_attempt }}` for `${{ github.sha }}`.")
+          $summary.Add('')
+          $summary.Add('## Job results')
+          foreach ($entry in $needResults.GetEnumerator()) { $summary.Add("- $($entry.Key): **$($entry.Value)**") }
+          $summary.Add('')
+          $summary.Add('## Evidence counts')
+          foreach ($key in $counts.Keys) { $summary.Add("- ${key}: $($counts[$key]) / $($expectedCounts[$key])") }
+          $summary.Add("- junit: $($xmlFiles.Count) / 28")
+          $summary.Add('')
+          $summary.Add('## Durations')
+          foreach ($mode in @('verify', 'move', 'replacement', 'concurrency')) {
+            $items = @($resultRecords | Where-Object Mode -EQ $mode)
+            $total = ($items | Measure-Object -Property DurationMs -Sum).Sum
+            if ($null -eq $total) { $total = 0 }
+            $summary.Add("- ${mode}: $([math]::Round($total / 1000, 1)) seconds total")
+          }
+          $summary.Add('')
+          $summary.Add('## Missing or failing evidence')
+          if ($problems.Count -eq 0) { $summary.Add('- None') } else { foreach ($problem in $problems) { $summary.Add("- $problem") } }
+          $summary | Set-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          New-Item -ItemType Directory -Path summary -Force | Out-Null
+          $summary | Set-Content -LiteralPath summary\verification-summary.md -Encoding utf8
+          [ordered]@{
+            runId = '${{ github.run_id }}'
+            runAttempt = '${{ github.run_attempt }}'
+            commit = '${{ github.sha }}'
+            needs = $needResults
+            counts = $counts
+            expectedCounts = $expectedCounts
+            problems = @($problems)
+          } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath summary\verification-summary.json -Encoding utf8NoBOM
+          if ($problems.Count -gt 0) { throw "Verification summary found $($problems.Count) problem(s)." }
+
+      - name: Upload verification summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-verification-summary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: summary
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  release:
+    name: Release verified Windows packages
+    needs: summarize
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && needs.summarize.result == 'success'
+    runs-on: windows-2025
+    timeout-minutes: 35
+    permissions:
+      contents: write
+    steps:
+      - name: Download exact language packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: windows-package-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-input/packages
+          merge-multiple: true
+
+      - name: Download exact language manifests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: windows-manifest-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-input/manifests
+          merge-multiple: true
+
+      - name: Download exact verification evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: windows-evidence-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-input/evidence
+          merge-multiple: false
+
+      - name: Validate release inputs and create provenance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $languages = @('cpp', 'go', 'rust', 'csharp', 'javascript', 'typescript', 'python', 'lua')
+          $packages = Join-Path $env:GITHUB_WORKSPACE 'release-input\packages'
+          $manifestsDir = Join-Path $env:GITHUB_WORKSPACE 'release-input\manifests'
+          $evidenceDir = Join-Path $env:GITHUB_WORKSPACE 'release-input\evidence'
+          $output = Join-Path $env:GITHUB_WORKSPACE 'release-output'
+          New-Item -ItemType Directory -Path $output -Force | Out-Null
+          $packageRecords = [System.Collections.Generic.List[object]]::new()
+          $zipShas = @{}
+          foreach ($language in $languages) {
+            $zip = Join-Path $packages "VSCode-win32-x64-$language.zip"
+            $manifestPath = Join-Path $manifestsDir "VSCode-win32-x64-$language.manifest.json"
+            if (-not (Test-Path -LiteralPath $zip)) { throw "Missing release ZIP: $zip" }
+            if (-not (Test-Path -LiteralPath $manifestPath)) { throw "Missing manifest: $manifestPath" }
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+            $sha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifestSha = if ($manifest.PSObject.Properties.Name -contains 'zipSha256') { [string]$manifest.zipSha256 } else { [string]$manifest.zipSha }
+            if ($manifestSha.ToLowerInvariant() -ne $sha) { throw "Manifest ZIP SHA mismatch for $language" }
+            if ([string]$manifest.commit -ne '${{ github.sha }}') { throw "Manifest commit mismatch for $language" }
+            $zipShas[$language] = $sha
+            $packageRecords.Add([pscustomobject]@{ language = $language; file = (Split-Path $zip -Leaf); sha256 = $sha; size = (Get-Item -LiteralPath $zip).Length; manifest = (Split-Path $manifestPath -Leaf) })
+          }
+
+          $evidenceJson = @(Get-ChildItem -LiteralPath $evidenceDir -Filter 'result.json' -File -Recurse)
+          $junitFiles = @(Get-ChildItem -LiteralPath $evidenceDir -Filter '*.xml' -File -Recurse)
+          if ($junitFiles.Count -ne 28) { throw "Expected 28 JUnit files, found $($junitFiles.Count)" }
+          foreach ($file in $junitFiles) {
+            [xml]$xml = Get-Content -LiteralPath $file.FullName -Raw
+            if (@($xml.SelectNodes('//testsuite')).Count -eq 0 -or @($xml.SelectNodes('//failure | //error')).Count -gt 0) { throw "Failing or empty JUnit evidence: $($file.FullName)" }
+          }
+          $testRecords = [System.Collections.Generic.List[object]]::new()
+          foreach ($file in $evidenceJson) {
+            try {
+              $json = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+              $mode = if ($json.PSObject.Properties.Name -contains 'mode') { [string]$json.mode } elseif ($json.PSObject.Properties.Name -contains 'testMode') { [string]$json.testMode } else { '' }
+              if ($mode -notin @('verify', 'move', 'replacement', 'concurrency')) { continue }
+              $status = if ($json.PSObject.Properties.Name -contains 'status') { [string]$json.status } elseif ($json.PSObject.Properties.Name -contains 'success') { if ($json.success) { 'passed' } else { 'failed' } } else { '' }
+              if ($status.ToLowerInvariant() -notin @('passed', 'pass', 'success', 'succeeded')) { throw "Evidence is not successful: $($file.FullName)" }
+              $evidenceShas = [System.Collections.Generic.List[string]]::new()
+              foreach ($property in @('zipSha256', 'zipSha', 'zipASha256', 'zipASha', 'zipBSha256', 'zipBSha')) {
+                if ($json.PSObject.Properties.Name -contains $property -and $json.$property) { $evidenceShas.Add(([string]$json.$property).ToLowerInvariant()) }
+              }
+              $relativeEvidencePath = $file.FullName.Substring($evidenceDir.Length + 1)
+              $languagePattern = 'cpp|go|rust|csharp|javascript|typescript|python|lua'
+              if ($mode -in @('verify', 'move')) {
+                $pathMatch = [regex]::Match($relativeEvidencePath, "windows-evidence-$mode-(?<language>$languagePattern)-${{ github.run_id }}-${{ github.run_attempt }}")
+                if (-not $pathMatch.Success) { throw "Cannot identify $mode language from $relativeEvidencePath" }
+                $expectedEvidenceShas = @($zipShas[$pathMatch.Groups['language'].Value])
+              } else {
+                $pathMatch = [regex]::Match($relativeEvidencePath, "windows-evidence-$mode-(?<a>$languagePattern)-(?<b>$languagePattern)-${{ github.run_id }}-${{ github.run_attempt }}")
+                if (-not $pathMatch.Success) { throw "Cannot identify $mode pair from $relativeEvidencePath" }
+                $expectedEvidenceShas = @($zipShas[$pathMatch.Groups['a'].Value], $zipShas[$pathMatch.Groups['b'].Value])
+              }
+              $actualEvidenceShas = @($evidenceShas | Sort-Object -Unique)
+              $expectedEvidenceShas = @($expectedEvidenceShas | Sort-Object -Unique)
+              if ($actualEvidenceShas.Count -ne $expectedEvidenceShas.Count -or @(Compare-Object $expectedEvidenceShas $actualEvidenceShas).Count -ne 0) {
+                throw "Evidence ZIP SHA mismatch in ${relativeEvidencePath}: expected $($expectedEvidenceShas -join ','), got $($actualEvidenceShas -join ',')"
+              }
+              $testRecords.Add([pscustomobject]@{ mode = $mode; status = $status; durationMs = $(if ($json.PSObject.Properties.Name -contains 'durationMs') { [long]$json.durationMs } else { 0 }); file = $relativeEvidencePath; zipSha256 = @($actualEvidenceShas) })
+            } catch {
+              throw "Invalid release evidence $($file.FullName): $_"
+            }
+          }
+          $modeCounts = @{
+            verify = @($testRecords | Where-Object mode -EQ 'verify').Count
+            move = @($testRecords | Where-Object mode -EQ 'move').Count
+            replacement = @($testRecords | Where-Object mode -EQ 'replacement').Count
+            concurrency = @($testRecords | Where-Object mode -EQ 'concurrency').Count
+          }
+          foreach ($expected in @(@('verify', 8), @('move', 8), @('replacement', 8), @('concurrency', 4))) {
+            if ($modeCounts[$expected[0]] -ne $expected[1]) { throw "Expected $($expected[1]) $($expected[0]) evidence results, found $($modeCounts[$expected[0]])" }
+          }
+
+          $checksumLines = foreach ($record in $packageRecords | Sort-Object file) { "$($record.sha256)  $($record.file)" }
+          $checksumLines | Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS') -Encoding ascii
+          $lockShas = @((Get-ChildItem -LiteralPath $manifestsDir -Filter '*.manifest.json' | ForEach-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json).lockSha256 } | Sort-Object -Unique))
+          $baseShas = @((Get-ChildItem -LiteralPath $manifestsDir -Filter '*.manifest.json' | ForEach-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json).baseSha256 } | Sort-Object -Unique))
+          if ($lockShas.Count -ne 1) { throw "Expected one lock SHA across manifests, found $($lockShas.Count)" }
+          if ($baseShas.Count -ne 1) { throw "Expected one base SHA across manifests, found $($baseShas.Count)" }
+          [ordered]@{
+            schemaVersion = 1
+            runId = '${{ github.run_id }}'
+            runAttempt = '${{ github.run_attempt }}'
+            runNumber = '${{ github.run_number }}'
+            repository = '${{ github.repository }}'
+            ref = '${{ github.ref }}'
+            commit = '${{ github.sha }}'
+            lockSha256 = $lockShas[0]
+            baseSha256 = $baseShas[0]
+            packages = @($packageRecords)
+            tests = [ordered]@{ counts = $modeCounts; junitCount = $junitFiles.Count; results = @($testRecords) }
+          } | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath (Join-Path $output 'provenance.json') -Encoding utf8NoBOM
+
+      - name: Create and publish verified release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = 'windows-oss-${{ github.run_id }}-${{ github.run_attempt }}'
+          $target = '${{ github.sha }}'
+          $releaseList = gh api "repos/$env:GH_REPO/releases?per_page=100"
+          if ($LASTEXITCODE -ne 0) { throw "Listing existing releases failed: $LASTEXITCODE" }
+          $matchingReleases = @((ConvertFrom-Json -InputObject ($releaseList -join "`n")) | Where-Object { $_.tag_name -eq $tag })
+          if ($matchingReleases.Count -gt 1) { throw "Found multiple releases for tag $tag." }
+          if ($matchingReleases.Count -eq 1) {
+            $release = $matchingReleases[0]
+            if (-not $release.draft) { throw "Release tag $tag is already published; refusing to overwrite it." }
+            if ([string]$release.target_commitish -ne $target) { throw "Existing draft $tag targets $($release.target_commitish), expected $target." }
+            gh api --method DELETE "repos/$env:GH_REPO/releases/$($release.id)"
+            if ($LASTEXITCODE -ne 0) { throw "Deleting matching draft failed: $LASTEXITCODE" }
+            gh api --method DELETE "repos/$env:GH_REPO/git/refs/tags/$tag" 2>$null
+            $global:LASTEXITCODE = 0
+          } else {
+            $existingTag = gh api "repos/$env:GH_REPO/git/ref/tags/$tag" --jq '.object.sha' 2>$null
+            if ($LASTEXITCODE -eq 0) { throw "Tag $tag already exists without a matching draft; refusing to overwrite it." }
+            $global:LASTEXITCODE = 0
+          }
+          $notes = @'
+          Automated Windows x64 Code OSS packages with locked, language-specific development environments.
+
+          Every ZIP is the original package artifact verified by the workflow. See `SHA256SUMS` and `provenance.json` for hashes and test provenance.
+          '@
+          gh release create $tag --target $target --title "Windows x64 OSS (${{ github.run_number }}.${{ github.run_attempt }})" --notes $notes --draft
+          if ($LASTEXITCODE -ne 0) { throw "Creating draft release failed: $LASTEXITCODE" }
+          $assets = @(
+            Get-ChildItem -LiteralPath release-input\packages -Filter '*.zip' -File | Sort-Object Name | ForEach-Object FullName
+            (Resolve-Path release-output\SHA256SUMS).Path
+            (Resolve-Path release-output\provenance.json).Path
+          )
+          gh release upload $tag @assets
+          if ($LASTEXITCODE -ne 0) { throw "Uploading draft assets failed; draft was left unpublished: $LASTEXITCODE" }
+          gh release edit $tag --draft=false
+          if ($LASTEXITCODE -ne 0) { throw "Publishing draft failed; release remains a draft: $LASTEXITCODE" }

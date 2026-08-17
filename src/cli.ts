@@ -4,17 +4,20 @@
  *--------------------------------------------------------------------------------------------*/
 
 import './bootstrap-cli.js'; // this MUST come before other imports as it changes global state
-import { configurePortable } from './bootstrap-node.js';
+import { configureBundledDevEnvironment, configurePortable } from './bootstrap-node.js';
 import { bootstrapESM } from './bootstrap-esm.js';
 import { resolveNLSConfiguration } from './vs/base/node/nls.js';
 import { product } from './bootstrap-meta.js';
 
+// Configure the bundled development environment immediately after `bootstrap-cli`
+const bundledDevEnvironment = configureBundledDevEnvironment(product);
+
+// Enable portable support
+configurePortable(product, bundledDevEnvironment);
+
 // NLS
 const nlsConfiguration = await resolveNLSConfiguration({ userLocale: 'en', osLocale: 'en', commit: product.commit, userDataPath: '', nlsMetadataPath: import.meta.dirname });
 process.env['VSCODE_NLS_CONFIG'] = JSON.stringify(nlsConfiguration); // required for `bootstrap-esm` to pick up NLS messages
-
-// Enable portable support
-configurePortable(product);
 
 // Signal processes that we got launched as CLI
 process.env['VSCODE_CLI'] = '1';
