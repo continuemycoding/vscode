@@ -6,11 +6,11 @@
 		"remotepro-cn.remotepro": {
 			"id": "remotepro-cn.remotepro",
 			"kind": "vsix",
-			"version": "1.4.1",
+			"version": "1.4.4",
 			"platform": "win32-x64",
 			"targetPlatform": "universal",
-			"url": "https://github.com/GitNerva9202/openclaw/releases/download/v1.4.1/remotepro-1.4.1.vsix",
-			"sha256": "a75ebbfc6caeaa7041b6692ddeb357b6cafcd0ec1d2b453900800e9abf040e6a",
+			"url": "https://gitee.com/RemotePro/RemotePro-vsix/releases/download/1.4.4/remotepro-1.4.4.vsix",
+			"sha256": "36e5a4a1459836b88e5bbb249aae197f43732d1e9741c212571baf6b4dca66c1",
 			"requiredFiles": [
 				"package.json",
 				"out/extension.js"

@@ -24,7 +24,7 @@ const BOOLEAN_VALUES = new Set(['true', 'false']);
 const DEFAULT_TIMEOUT_MS = 12 * 60_000;
 const PHASE_TIMEOUT_MINIMUM_MS = 30_000;
 const REMOTEPRO_ID = 'remotepro-cn.remotepro';
-const REMOTEPRO_VERSION = '1.4.1';
+const REMOTEPRO_VERSION = '1.4.4';
 const FIREWALL_PREFIX = 'VSCode-Packaged-DevEnv-Integration';
 const LANGUAGE_COMMANDS = {
 	cpp: ['cmake', 'ninja', 'gcc', 'g++', 'gdb'],

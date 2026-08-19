@@ -137,7 +137,7 @@ type DapMessage = {
 
 const DEBUG_CONFIGURATION_NAME = '远控Pro: 本地运行';
 const REMOTEPRO_ID = 'remotepro-cn.remotepro';
-const REMOTEPRO_VERSION = '1.4.1';
+const REMOTEPRO_VERSION = '1.4.4';
 const execFileAsync = promisify(execFile);
 const sourceFiles: Record<Language, string> = {
 	cpp: 'src/main.cpp',
