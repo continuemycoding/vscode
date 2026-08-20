@@ -386,10 +386,16 @@ function runProcess(executable, args, options = {}) {
 
 async function powershell(script, options = {}) {
 	const executable = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-	return runProcess(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], {
-		...options,
-		timeoutMs: options.timeoutMs ?? 60_000
-	});
+	const file = path.join(os.tmpdir(), `packaged-devenv-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.ps1`);
+	await fs.writeFile(file, `${script}\n`, 'utf8');
+	try {
+		return await runProcess(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file], {
+			...options,
+			timeoutMs: options.timeoutMs ?? 60_000
+		});
+	} finally {
+		await fs.rm(file, { force: true });
+	}
 }
 
 async function getSevenZip() {
@@ -605,7 +611,7 @@ async function registrySnapshot() {
 		"  }",
 		"}",
 		"$payload | ConvertTo-Json -Depth 5 -Compress"
-	].join('; ');
+	].join('\n');
 	const { stdout } = await powershell(script, { timeoutMs: 30_000 });
 	return JSON.parse(stdout.trim());
 }
