@@ -6,7 +6,7 @@
 
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { createReadStream, realpathSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -263,6 +263,29 @@ function absolute(value) {
 	return path.resolve(value);
 }
 
+function stripExtendedPath(value) {
+	if (value.startsWith('\\\\?\\UNC\\')) {
+		return `\\\\${value.slice(8)}`;
+	}
+	if (value.startsWith('\\\\?\\')) {
+		return value.slice(4);
+	}
+	return value;
+}
+
+function nativeLongPath(value) {
+	const resolved = path.resolve(value);
+	try {
+		return stripExtendedPath(realpathSync.native(resolved));
+	} catch {
+		return resolved;
+	}
+}
+
+function tempRoot() {
+	return nativeLongPath(process.env.RUNNER_TEMP || process.env.TEMP || os.tmpdir());
+}
+
 function normalized(value) {
 	return path.normalize(path.resolve(value)).toLowerCase();
 }
@@ -385,7 +408,7 @@ function runProcess(executable, args, options = {}) {
 
 async function powershell(script, options = {}) {
 	const executable = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-	const file = path.join(os.tmpdir(), `packaged-devenv-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.ps1`);
+	const file = path.join(tempRoot(), `packaged-devenv-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.ps1`);
 	await fs.writeFile(file, `${script}\n`, 'utf8');
 	try {
 		return await runProcess(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file], {
@@ -710,7 +733,7 @@ async function collectExecutables(appRoot) {
 			}
 		}
 	}
-	return [...new Set(output.map(absolute))];
+	return [...new Set(output.map(nativeLongPath))];
 }
 
 class FirewallIsolation {
@@ -721,7 +744,8 @@ class FirewallIsolation {
 
 	async assertAvailable() {
 		const probeName = `${FIREWALL_PREFIX}-Probe-${randomUUID()}`;
-		const add = await powershell(`New-NetFirewallRule -DisplayName '${probeName}' -Direction Outbound -Action Block -Program '$env:SystemRoot\\System32\\where.exe' -Profile Any -ErrorAction Stop | Out-Null`, {
+		const whereExe = nativeLongPath(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe')).replace(/'/g, "''");
+		const add = await powershell(`New-NetFirewallRule -DisplayName '${probeName}' -Direction Outbound -Action Block -Program '${whereExe}' -Profile Domain,Private,Public -Enabled True -ErrorAction Stop | Out-Null`, {
 			allowFailure: true,
 			timeoutMs: 30_000
 		});
@@ -733,18 +757,31 @@ class FirewallIsolation {
 
 	async block(appRoots) {
 		await this.assertAvailable();
-		const executables = [...new Set((await Promise.all(appRoots.map(root => collectExecutables(root)))).flat())];
+		const executables = [...new Set((await Promise.all(appRoots.map(root => collectExecutables(root)))).flat().map(nativeLongPath))];
 		const listFile = path.join(this.evidenceDir, 'network', 'block-targets.json');
 		await writeJson(listFile, executables);
 		const escapedList = listFile.replace(/'/g, "''");
 		const prefix = FIREWALL_PREFIX.replace(/'/g, "''");
 		const result = await powershell(`$ErrorActionPreference = 'Stop'
-$exes = Get-Content -LiteralPath '${escapedList}' -Raw | ConvertFrom-Json
+$exes = Get-Content -LiteralPath '${escapedList}' -Encoding UTF8 -Raw | ConvertFrom-Json
 $results = New-Object System.Collections.Generic.List[object]
 foreach ($exe in @($exes)) {
-  $name = '${prefix}-' + [guid]::NewGuid().ToString()
-  New-NetFirewallRule -DisplayName $name -Direction Outbound -Action Block -Program $exe -Profile Any -ErrorAction Stop | Out-Null
-  $results.Add([ordered]@{ executable = [string]$exe; name = $name })
+  $path = [string]$exe
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+    throw "Firewall target missing: $path"
+  }
+  $full = (Get-Item -LiteralPath $path).FullName
+  $name = '${prefix}-' + [guid]::NewGuid().ToString('N')
+  try {
+    New-NetFirewallRule -Name $name -DisplayName $name -Direction Outbound -Action Block -Program $full -Profile Domain,Private,Public -Enabled True -ErrorAction Stop | Out-Null
+  } catch {
+    $cimError = $_.Exception.Message
+    $add = & netsh @('advfirewall', 'firewall', 'add', 'rule', ('name=' + $name), 'dir=out', 'action=block', ('program=' + $full), 'enable=yes', 'profile=domain,private,public')
+    if ($LASTEXITCODE -ne 0) {
+      throw ('Firewall rule failed for ' + $full + ': ' + $cimError + '; netsh: ' + $add)
+    }
+  }
+  $results.Add([ordered]@{ executable = $full; name = $name })
 }
 $results | ConvertTo-Json -Depth 6 -Compress`, { timeoutMs: 180_000 });
 		const parsed = JSON.parse(result.stdout.trim() || '[]');
@@ -1099,7 +1136,7 @@ async function setupRun(args) {
 	await fs.rm(args.evidenceDir, { recursive: true, force: true });
 	await fs.mkdir(args.evidenceDir, { recursive: true });
 	await compileTestExtension();
-	const runRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'vscode-packaged-devenv-'));
+	const runRoot = await fs.mkdtemp(path.join(tempRoot(), 'vscode-packaged-devenv-'));
 	const workspaceRoot = path.join(runRoot, 'workspaces');
 	await fs.mkdir(workspaceRoot, { recursive: true });
 	const registryBefore = await registrySnapshot();
