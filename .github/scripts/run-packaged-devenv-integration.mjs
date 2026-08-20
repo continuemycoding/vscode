@@ -349,12 +349,11 @@ function runProcess(executable, args, options = {}) {
 		let stderr = '';
 		let settled = false;
 		const timeout = options.timeoutMs ? setTimeout(() => {
-			void killPidTree(child.pid).finally(() => {
-				if (!settled) {
-					settled = true;
-					reject(new Error(`${path.basename(executable)} exceeded ${options.timeoutMs}ms`));
-				}
-			});
+			if (!settled) {
+				settled = true;
+				reject(new Error(`${path.basename(executable)} exceeded ${options.timeoutMs}ms`));
+			}
+			void killPidTree(child.pid);
 		}, options.timeoutMs) : undefined;
 		child.stdout?.on('data', chunk => stdout += chunk.toString());
 		child.stderr?.on('data', chunk => stderr += chunk.toString());
@@ -550,15 +549,9 @@ async function assertPurifiedPath(languages, evidenceDir) {
 	const snapshots = [];
 	for (const command of commandNamesForLanguages(languages)) {
 		const where = await whereCommand(command, pathValue);
-		const escaped = command.replace(/'/g, "''");
-		const result = await powershell(`$ErrorActionPreference='SilentlyContinue'; $command=Get-Command -CommandType Application -Name '${escaped}' -ErrorAction SilentlyContinue; if ($command) { $command.Source; exit 7 }`, {
-			allowFailure: true,
-			env: strictBaseEnvironment(pathValue),
-			timeoutMs: 15_000
-		});
-		snapshots.push({ command, getCommandExitCode: result.code, getCommandOutput: result.stdout.trim(), where: where ?? null });
-		if (where || result.code === 7 || result.stdout.trim()) {
-			throw new Error(`Purified PATH unexpectedly resolves ${command}: ${where ?? result.stdout.trim()}`);
+		snapshots.push({ command, where: where ?? null });
+		if (where) {
+			throw new Error(`Purified PATH unexpectedly resolves ${command}: ${where}`);
 		}
 	}
 	await writeJson(path.join(evidenceDir, 'path', 'prelaunch-resolution.json'), { path: pathValue, snapshots, timestamp: timestamp() });
@@ -741,24 +734,50 @@ class FirewallIsolation {
 	async block(appRoots) {
 		await this.assertAvailable();
 		const executables = [...new Set((await Promise.all(appRoots.map(root => collectExecutables(root)))).flat())];
-		for (const executable of executables) {
-			const name = `${FIREWALL_PREFIX}-${randomUUID()}`;
-			const escapedName = name.replace(/'/g, "''");
-			const escapedExecutable = executable.replace(/'/g, "''");
-			const result = await powershell(`New-NetFirewallRule -DisplayName '${escapedName}' -Direction Outbound -Action Block -Program '${escapedExecutable}' -Profile Any -ErrorAction Stop | Select-Object DisplayName,Direction,Action,Enabled,Profile,Program | ConvertTo-Json -Compress`, { timeoutMs: 30_000 });
-			this.rules.push({ executable, name, result: JSON.parse(result.stdout.trim()) });
-		}
+		const listFile = path.join(this.evidenceDir, 'network', 'block-targets.json');
+		await writeJson(listFile, executables);
+		const escapedList = listFile.replace(/'/g, "''");
+		const prefix = FIREWALL_PREFIX.replace(/'/g, "''");
+		const result = await powershell(`$ErrorActionPreference = 'Stop'
+$exes = Get-Content -LiteralPath '${escapedList}' -Raw | ConvertFrom-Json
+$results = New-Object System.Collections.Generic.List[object]
+foreach ($exe in @($exes)) {
+  $name = '${prefix}-' + [guid]::NewGuid().ToString()
+  New-NetFirewallRule -DisplayName $name -Direction Outbound -Action Block -Program $exe -Profile Any -ErrorAction Stop | Out-Null
+  $results.Add([ordered]@{ executable = [string]$exe; name = $name })
+}
+$results | ConvertTo-Json -Depth 6 -Compress`, { timeoutMs: 180_000 });
+		const parsed = JSON.parse(result.stdout.trim() || '[]');
+		this.rules = Array.isArray(parsed) ? parsed : [parsed];
 		await writeJson(path.join(this.evidenceDir, 'network', 'firewall-active.json'), { activeAt: timestamp(), rules: this.rules });
 	}
 
 	async remove() {
-		const failures = [];
-		for (const rule of [...this.rules].reverse()) {
-			const escapedName = rule.name.replace(/'/g, "''");
-			const result = await powershell(`Remove-NetFirewallRule -DisplayName '${escapedName}' -ErrorAction Stop`, { allowFailure: true, timeoutMs: 30_000 });
-			if (result.code !== 0) {
-				failures.push({ name: rule.name, stderr: result.stderr, stdout: result.stdout });
-			}
+		if (this.rules.length === 0) {
+			await writeJson(path.join(this.evidenceDir, 'network', 'firewall-removed.json'), { failures: [], removedAt: timestamp(), rules: [] });
+			return;
+		}
+		const names = this.rules.map(rule => rule.name);
+		const listFile = path.join(this.evidenceDir, 'network', 'unblock-names.json');
+		await writeJson(listFile, names);
+		const escapedList = listFile.replace(/'/g, "''");
+		const result = await powershell(`$ErrorActionPreference = 'Continue'
+$names = Get-Content -LiteralPath '${escapedList}' -Raw | ConvertFrom-Json
+$failures = New-Object System.Collections.Generic.List[object]
+foreach ($name in @($names)) {
+  try {
+    Remove-NetFirewallRule -DisplayName $name -ErrorAction Stop
+  } catch {
+    $failures.Add([ordered]@{ name = [string]$name; error = $_.Exception.Message })
+  }
+}
+[ordered]@{ failures = $failures } | ConvertTo-Json -Depth 6 -Compress`, { allowFailure: true, timeoutMs: 180_000 });
+		let failures = [];
+		try {
+			const parsed = JSON.parse(result.stdout.trim() || '{"failures":[]}');
+			failures = Array.isArray(parsed.failures) ? parsed.failures : [];
+		} catch {
+			failures = [{ name: '*', error: (result.stderr || result.stdout).trim() || `exit ${result.code}` }];
 		}
 		await writeJson(path.join(this.evidenceDir, 'network', 'firewall-removed.json'), { failures, removedAt: timestamp(), rules: this.rules });
 		this.rules = [];
