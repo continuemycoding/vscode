@@ -27,6 +27,7 @@ import {
 	isInside,
 	loadLock,
 	log,
+	normalizeWindowsDesktopExecutable,
 	parseArgs,
 	pathExists,
 	readJson,
@@ -120,9 +121,7 @@ async function main() {
 }
 
 async function ensureAppRoot(appRoot) {
-	if (!(await pathExists(join(appRoot, 'Code.exe')))) {
-		throw new Error(`App root is missing Code.exe: ${appRoot}`);
-	}
+	await normalizeWindowsDesktopExecutable(appRoot);
 	if (!(await pathExists(join(appRoot, 'resources', 'app')))) {
 		throw new Error(`App root is missing resources/app: ${appRoot}`);
 	}

@@ -80,6 +80,32 @@ export async function pathExists(target) {
 	}
 }
 
+export const WINDOWS_DESKTOP_EXECUTABLES = Object.freeze(['Code.exe', 'Code - OSS.exe']);
+
+export async function resolveWindowsDesktopExecutable(appRoot) {
+	for (const name of WINDOWS_DESKTOP_EXECUTABLES) {
+		const file = join(appRoot, name);
+		if (await pathExists(file)) {
+			return file;
+		}
+	}
+	throw new Error(`App root is missing Code.exe or Code - OSS.exe: ${appRoot}`);
+}
+
+export async function normalizeWindowsDesktopExecutable(appRoot) {
+	const found = await resolveWindowsDesktopExecutable(appRoot);
+	const dest = join(appRoot, 'Code.exe');
+	if (found !== dest) {
+		await fs.rename(found, dest);
+	}
+	const fromManifest = join(appRoot, 'Code - OSS.VisualElementsManifest.xml');
+	const toManifest = join(appRoot, 'Code.VisualElementsManifest.xml');
+	if (await pathExists(fromManifest) && !(await pathExists(toManifest))) {
+		await fs.rename(fromManifest, toManifest);
+	}
+	return dest;
+}
+
 export async function ensureDir(dir) {
 	await fs.mkdir(dir, { recursive: true });
 }
