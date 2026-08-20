@@ -27,7 +27,9 @@
 			"sha256": "67f252c683a385ed4dd3dbe0d4860099974c582b965499f500fbcbbc733d2e92",
 			"requiredFiles": [
 				"package.json",
-				"dist/extension.js"
+				"extension.js",
+				"legacy/dist/extension.js",
+				"next/dist/extension.js"
 			],
 			"extensionDependencies": []
 		},
