@@ -63,7 +63,7 @@ if (process.platform === 'win32') {
 	if (!hasSupportedVisualStudioVersion()) {
 		console.error('\x1b[1;31m*** Invalid C/C++ Compiler Toolchain. Please check https://github.com/microsoft/vscode/wiki/How-to-Contribute#prerequisites.\x1b[0;0m');
 		console.error('\x1b[1;31m*** If you have Visual Studio installed in a custom location, you can specify it via the environment variable:\x1b[0;0m');
-		console.error('\x1b[1;31m*** set vs2022_install=<path> (or vs2019_install for older versions)\x1b[0;0m');
+		console.error('\x1b[1;31m*** set vs2026_install=<path> (or vs2022_install / vs2019_install for older versions)\x1b[0;0m');
 		throw new Error();
 	}
 }
@@ -78,36 +78,34 @@ if (process.arch !== os.arch()) {
 function hasSupportedVisualStudioVersion() {
 	// Translated over from
 	// https://source.chromium.org/chromium/chromium/src/+/master:build/vs_toolchain.py;l=140-175
-	const supportedVersions = ['2022', '2019'];
+	// VS 2026 ships under Microsoft Visual Studio/18 (internal version), not /2026.
+	const supportedVersions: ReadonlyArray<{ env: string; folders: readonly string[] }> = [
+		{ env: '2026', folders: ['2026', '18'] },
+		{ env: '2022', folders: ['2022'] },
+		{ env: '2019', folders: ['2019'] },
+	];
 
 	const availableVersions = [];
 	for (const version of supportedVersions) {
-		// Check environment variable first (explicit override)
-		let vsPath = process.env[`vs${version}_install`];
+		const vsPath = process.env[`vs${version.env}_install`];
 		if (vsPath && fs.existsSync(vsPath)) {
-			availableVersions.push(version);
+			availableVersions.push(version.env);
 			break;
 		}
 
-		// Check default installation paths
 		const programFiles86Path = process.env['ProgramFiles(x86)'];
 		const programFiles64Path = process.env['ProgramFiles'];
-
 		const vsTypes = ['Enterprise', 'Professional', 'Community', 'Preview', 'BuildTools', 'IntPreview'];
-		if (programFiles64Path) {
-			vsPath = `${programFiles64Path}/Microsoft Visual Studio/${version}`;
-			if (vsTypes.some(vsType => fs.existsSync(path.join(vsPath!, vsType)))) {
-				availableVersions.push(version);
-				break;
-			}
-		}
-
-		if (programFiles86Path) {
-			vsPath = `${programFiles86Path}/Microsoft Visual Studio/${version}`;
-			if (vsTypes.some(vsType => fs.existsSync(path.join(vsPath!, vsType)))) {
-				availableVersions.push(version);
-				break;
-			}
+		const roots = [programFiles64Path, programFiles86Path].filter((entry): entry is string => Boolean(entry));
+		const found = roots.some(root =>
+			version.folders.some(folder => {
+				const installRoot = `${root}/Microsoft Visual Studio/${folder}`;
+				return vsTypes.some(vsType => fs.existsSync(path.join(installRoot, vsType)));
+			})
+		);
+		if (found) {
+			availableVersions.push(version.env);
+			break;
 		}
 	}
 
