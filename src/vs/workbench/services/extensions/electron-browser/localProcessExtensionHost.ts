@@ -244,10 +244,25 @@ export class NativeLocalProcessExtensionHost extends Disposable implements IExte
 		delete env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'];
 		if (this._productService.bundledDevEnvironment) {
 			// 渲染进程没有 Node 的 process；用 preload 暴露的主进程环境覆盖 shell PATH。
+			// Windows 上 PATH/Path 会同时存在，只写其中一个会让登录 shell 的那份继续生效。
+			delete env['PATH'];
+			delete env['Path'];
 			env['VSCODE_BUNDLED_DEV_ENV_ROOT'] = this._getBundledDevEnvironmentRoot();
 			const managedEnv = process.env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'];
 			if (typeof managedEnv === 'string') {
 				env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'] = managedEnv;
+				try {
+					const names: unknown = JSON.parse(managedEnv);
+					if (Array.isArray(names)) {
+						for (const name of names) {
+							if (typeof name === 'string' && typeof process.env[name] === 'string') {
+								env[name] = process.env[name];
+							}
+						}
+					}
+				} catch {
+					// 主进程注入的清单损坏时仍继续启动扩展宿主
+				}
 			}
 			if (typeof process.env['PATH'] === 'string') {
 				env['PATH'] = process.env['PATH'];

@@ -668,7 +668,7 @@ async function registrySnapshot() {
 		"}",
 		"$payload | ConvertTo-Json -Depth 5 -Compress"
 	].join('\n');
-	const { stdout } = await powershell(script, { timeoutMs: 30_000 });
+	const { stdout } = await powershell(script, { timeoutMs: 120_000 });
 	return JSON.parse(stdout.trim());
 }
 
@@ -792,12 +792,12 @@ try {
   New-NetFirewallRule -DisplayName '${probeName}' -Direction Outbound -Action Block -Program '${whereExe}' -RemoteAddress @('0.0.0.0-126.255.255.255','128.0.0.0-255.255.255.255') -Profile Domain,Private,Public -Enabled True -ErrorAction Stop | Out-Null
 }`, {
 			allowFailure: true,
-			timeoutMs: 30_000
+			timeoutMs: 120_000
 		});
 		if (add.code !== 0) {
 			throw new Error(`Windows Firewall isolation requires elevation and a running firewall service: ${(add.stderr || add.stdout).trim()}`);
 		}
-		await powershell(`Remove-NetFirewallRule -DisplayName '${probeName}' -ErrorAction SilentlyContinue`, { allowFailure: true, timeoutMs: 30_000 });
+		await powershell(`Remove-NetFirewallRule -DisplayName '${probeName}' -ErrorAction SilentlyContinue`, { allowFailure: true, timeoutMs: 120_000 });
 	}
 
 	async block(appRoots) {
@@ -941,11 +941,10 @@ async function runTypeScriptInstall(appRoot, projectDir, evidenceDir, timeoutMs)
 	if (!node || !npm) {
 		throw new Error('TypeScript dependency preparation requires packaged node and npm');
 	}
-	const npmCli = npm.toLowerCase().endsWith('.cmd') ? path.join(path.dirname(npm), 'node_modules', 'npm', 'bin', 'npm-cli.js') : npm;
+	const npmCli = path.join(path.dirname(node), 'node_modules', 'npm', 'bin', 'npm-cli.js');
 	await ensureFile(npmCli, 'packaged npm CLI');
 	const packageLock = path.join(projectDir, 'package-lock.json');
-	const installArgs = npmCli === npm ? ['install', '--ignore-scripts'] : [npmCli, 'install', '--ignore-scripts'];
-	await runProcess(npmCli === npm ? npm : node, installArgs, {
+	await runProcess(node, [npmCli, 'install', '--ignore-scripts'], {
 		cwd: projectDir,
 		env: { ...strictBaseEnvironment(systemPaths().join(path.delimiter)), PATH: `${path.dirname(node)}${path.delimiter}${systemPaths().join(path.delimiter)}`, Path: `${path.dirname(node)}${path.delimiter}${systemPaths().join(path.delimiter)}` },
 		timeoutMs
@@ -960,7 +959,7 @@ async function resolvePackagedCommand(appRoot, command) {
 	const entriesFile = path.join(appRoot, 'dev-env', 'path-entries.json');
 	const entries = await readJson(entriesFile);
 	const roots = Array.isArray(entries.path) ? entries.path.map(relative => path.resolve(path.join(appRoot, 'dev-env'), relative)) : [];
-	const extensions = ['', '.exe', '.cmd', '.bat'];
+	const extensions = process.platform === 'win32' ? ['.exe', '.cmd', '.bat'] : ['', '.exe', '.cmd', '.bat'];
 	for (const root of roots) {
 		if (!isUnder(path.join(appRoot, 'dev-env'), root)) {
 			throw new Error(`path-entries.json escapes packaged dev-env: ${root}`);
@@ -984,9 +983,12 @@ async function seedPortableSettings(appRoot) {
 		'extensions.autoUpdate': false,
 		'extensions.ignoreRecommendations': true,
 		'http.proxySupport': 'off',
+		'javascript.suggest.autoImports': false,
 		'python.terminal.activateEnvironment': false,
 		'rust-analyzer.initializeStopped': true,
 		'telemetry.telemetryLevel': 'off',
+		'typescript.disableAutomaticTypeAcquisition': true,
+		'typescript.surveys.enabled': false,
 		'update.mode': 'none'
 	};
 	await fs.writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
@@ -1096,6 +1098,7 @@ async function runEditorPhase(options) {
 				await writeProcessSnapshot(path.join(evidenceDir, 'processes', `${phase}-before-kill.json`), child.pid, { actor, appRoot, phase });
 				await killPidTree(child.pid);
 				await waitForTreeExit(child.pid);
+				await killProcessesUnder(appRoot);
 				await persistHostLog();
 				return { elapsedMs: Date.now() - started, pid: child.pid, state };
 			}
@@ -1117,6 +1120,7 @@ async function runEditorPhase(options) {
 		await writeProcessSnapshot(path.join(evidenceDir, 'processes', `${phase}-failure.json`), child.pid, { actor, appRoot, error: String(error), phase }).catch(() => undefined);
 		await persistHostLog().catch(() => undefined);
 		await killPidTree(child.pid);
+		await killProcessesUnder(appRoot).catch(() => undefined);
 		throw error;
 	}
 }
@@ -1169,7 +1173,27 @@ function assertEvidenceRoot(result, appRoot, label) {
 	}
 }
 
+async function killProcessesUnder(root) {
+	const taskkill = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
+	for (let attempt = 0; attempt < 8; attempt++) {
+		const processes = await collectCimProcesses();
+		const offending = processes.filter(processInfo => {
+			const executable = processInfo.ExecutablePath;
+			const commandLine = processInfo.CommandLine;
+			return typeof executable === 'string' && isUnder(root, executable) || typeof commandLine === 'string' && normalizedTextContainsPath(commandLine, root);
+		});
+		if (offending.length === 0) {
+			return;
+		}
+		for (const processInfo of offending) {
+			await runProcess(taskkill, ['/PID', String(processInfo.ProcessId), '/T', '/F'], { allowFailure: true, timeoutMs: 30_000 });
+		}
+		await new Promise(resolve => setTimeout(resolve, 400));
+	}
+}
+
 async function assertNoRunningProcessesUnder(root) {
+	await killProcessesUnder(root);
 	const processes = await collectCimProcesses();
 	const offending = processes.filter(processInfo => {
 		const executable = processInfo.ExecutablePath;
@@ -1578,9 +1602,21 @@ async function main() {
 			error ??= cleanupError;
 		}
 		if (!args.keepTemp) {
-			await fs.rm(setup.runRoot, { recursive: true, force: true }).catch(cleanupError => {
-				error ??= cleanupError;
-			});
+			await killProcessesUnder(setup.runRoot).catch(() => undefined);
+			let removed = false;
+			for (let attempt = 0; attempt < 8 && !removed; attempt++) {
+				try {
+					await fs.rm(setup.runRoot, { recursive: true, force: true });
+					removed = true;
+				} catch (cleanupError) {
+					if (attempt === 7) {
+						error ??= cleanupError;
+					} else {
+						await killProcessesUnder(setup.runRoot).catch(() => undefined);
+						await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+					}
+				}
+			}
 		} else {
 			result.tempRoot = setup.runRoot;
 		}

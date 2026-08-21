@@ -206,10 +206,10 @@ function now(): string {
 	return new Date().toISOString();
 }
 
-async function waitFor<T>(get: () => T | undefined, description: string, timeoutMs: number): Promise<T> {
+async function waitFor<T>(get: () => T | undefined | Promise<T | undefined>, description: string, timeoutMs: number): Promise<T> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
-		const value = get();
+		const value = await get();
 		if (value !== undefined) {
 			return value;
 		}
@@ -296,11 +296,15 @@ async function probeAndCollect(cfg: PackagedIntegrationConfig): Promise<{
 		}
 		commands.push({ command, path: await resolveCommand(command), source: 'probe' });
 	}
-	const extensions = probe.requiredExtensions.map(required => {
+	const extensions: ExtensionEvidence[] = [];
+	for (const required of probe.requiredExtensions) {
 		const extension = vscode.extensions.getExtension(required.id);
 		assert.ok(extension, `required extension is not installed: ${required.id}`);
-		return extensionEvidence(extension);
-	});
+		if (!extension.isActive) {
+			await extension.activate();
+		}
+		extensions.push(extensionEvidence(extension));
+	}
 	const remotePro = extensionEvidence(remoteProExtension);
 	assertRootedEvidence(cfg, commands, [...extensions, remotePro]);
 	return { commands, extensions, probe, remotePro };
@@ -341,13 +345,15 @@ async function openAndExerciseLanguage(cfg: PackagedIntegrationConfig): Promise<
 	const anchor = document.positionAt(marker.index + marker[0].length);
 
 	if (check.kind === 'completion') {
-		const completion = await vscode.commands.executeCommand<vscode.CompletionList>(
-			'vscode.executeCompletionItemProvider',
-			document.uri,
-			anchor,
-			'.'
-		);
-		assert.ok(completion && completion.items.length > 0, `no completion items returned for ${cfg.language}`);
+		const completion = await waitFor(async () => {
+			const current = await vscode.commands.executeCommand<vscode.CompletionList>(
+				'vscode.executeCompletionItemProvider',
+				document.uri,
+				anchor,
+				'.'
+			);
+			return current && current.items.length > 0 ? current : undefined;
+		}, `${cfg.language} completion items`, Math.min(cfg.timeoutMs, 120_000));
 		return {
 			kind: 'completion',
 			position: { character: anchor.character, line: anchor.line },
