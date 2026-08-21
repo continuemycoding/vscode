@@ -38,6 +38,7 @@ const COMMAND_CHECKS = {
 	rust: [
 		{ rel: '.cargo/bin/rustc.exe', args: ['--version', '--verbose'], includes: 'host: x86_64-pc-windows-gnu' },
 		{ rel: '.cargo/bin/cargo.exe', args: ['--version'] },
+		{ rel: '.rustup/toolchains/stable-x86_64-pc-windows-gnu/bin/rustc.exe', args: ['--version', '--verbose'], includes: 'host: x86_64-pc-windows-gnu' },
 		{ rel: 'MinGW/bin/gcc.exe', args: ['--version'] },
 	],
 	csharp: [

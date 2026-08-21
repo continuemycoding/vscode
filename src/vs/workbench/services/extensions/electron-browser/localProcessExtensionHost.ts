@@ -7,6 +7,7 @@ import { timeout } from '../../../../base/common/async.js';
 import { encodeBase64, VSBuffer } from '../../../../base/common/buffer.js';
 import { CancellationError } from '../../../../base/common/errors.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
+import { isEqualOrParent } from '../../../../base/common/extpath.js';
 import { dirname } from '../../../../base/common/path.js';
 import { Disposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import * as objects from '../../../../base/common/objects.js';
@@ -240,36 +241,7 @@ export class NativeLocalProcessExtensionHost extends Disposable implements IExte
 			objects.mixin(env, this._environmentService.debugExtensionHost.env);
 		}
 
-		delete env['VSCODE_BUNDLED_DEV_ENV_ROOT'];
-		delete env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'];
-		if (this._productService.bundledDevEnvironment) {
-			// 渲染进程没有 Node 的 process；用 preload 暴露的主进程环境覆盖 shell PATH。
-			// Windows 上 PATH/Path 会同时存在，只写其中一个会让登录 shell 的那份继续生效。
-			delete env['PATH'];
-			delete env['Path'];
-			env['VSCODE_BUNDLED_DEV_ENV_ROOT'] = this._getBundledDevEnvironmentRoot();
-			const managedEnv = process.env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'];
-			if (typeof managedEnv === 'string') {
-				env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'] = managedEnv;
-				try {
-					const names: unknown = JSON.parse(managedEnv);
-					if (Array.isArray(names)) {
-						for (const name of names) {
-							if (typeof name === 'string' && typeof process.env[name] === 'string') {
-								env[name] = process.env[name];
-							}
-						}
-					}
-				} catch {
-					// 主进程注入的清单损坏时仍继续启动扩展宿主
-				}
-			}
-			if (typeof process.env['PATH'] === 'string') {
-				env['PATH'] = process.env['PATH'];
-			} else if (typeof process.env['Path'] === 'string') {
-				env['Path'] = process.env['Path'];
-			}
-		}
+		this._applyBundledDevEnvironmentOverride(env);
 
 		removeDangerousEnvVariables(env);
 
@@ -419,6 +391,88 @@ export class NativeLocalProcessExtensionHost extends Disposable implements IExte
 			return dirname(dirname(dirname(this._environmentService.appRoot)));
 		}
 		return dirname(dirname(this._environmentService.appRoot));
+	}
+
+	private _applyBundledDevEnvironmentOverride(env: { [key: string]: string | undefined }): void {
+		delete env['VSCODE_BUNDLED_DEV_ENV_ROOT'];
+		delete env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'];
+		if (!this._productService.bundledDevEnvironment) {
+			return;
+		}
+
+		const root = this._getBundledDevEnvironmentRoot();
+		const ignoreCase = platform.isWindows;
+		env['VSCODE_BUNDLED_DEV_ENV_ROOT'] = root;
+
+		const managedEnv = process.env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'];
+		if (typeof managedEnv === 'string') {
+			env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'] = managedEnv;
+			try {
+				const names: unknown = JSON.parse(managedEnv);
+				if (Array.isArray(names)) {
+					for (const name of names) {
+						if (typeof name === 'string' && typeof process.env[name] === 'string') {
+							env[name] = process.env[name];
+						}
+					}
+				}
+			} catch {
+				// 主进程注入的清单损坏时仍继续启动扩展宿主
+			}
+		}
+
+		for (const [key, value] of Object.entries(process.env)) {
+			if (typeof value !== 'string' || !value || /^(PATH|PATHEXT)$/i.test(key)) {
+				continue;
+			}
+			if (isEqualOrParent(value, root, ignoreCase)) {
+				env[key] = value;
+			}
+		}
+
+		env['DOTNET_ADD_GLOBAL_TOOLS_TO_PATH'] = process.env['DOTNET_ADD_GLOBAL_TOOLS_TO_PATH'] ?? '0';
+
+		delete env['PATH'];
+		delete env['Path'];
+		const filteredPath = this._bundledDevEnvironmentPath(root);
+		if (filteredPath) {
+			env['PATH'] = filteredPath;
+			if (platform.isWindows) {
+				env['Path'] = filteredPath;
+			}
+		}
+	}
+
+	private _bundledDevEnvironmentPath(root: string): string | undefined {
+		const raw = process.env['PATH'] ?? process.env['Path'];
+		if (typeof raw !== 'string') {
+			return undefined;
+		}
+		const delimiter = platform.isWindows ? ';' : ':';
+		const ignoreCase = platform.isWindows;
+		const systemRoot = process.env['SystemRoot'] || process.env['windir'] || '';
+		const bundled: string[] = [];
+		const system: string[] = [];
+		const seen = new Set<string>();
+		for (const entry of raw.split(delimiter)) {
+			if (!entry) {
+				continue;
+			}
+			const key = ignoreCase ? entry.toLowerCase() : entry;
+			if (seen.has(key)) {
+				continue;
+			}
+			if (isEqualOrParent(entry, root, ignoreCase)) {
+				seen.add(key);
+				bundled.push(entry);
+				continue;
+			}
+			if (systemRoot && isEqualOrParent(entry, systemRoot, ignoreCase)) {
+				seen.add(key);
+				system.push(entry);
+			}
+		}
+		return [...bundled, ...system].join(delimiter);
 	}
 
 	/**

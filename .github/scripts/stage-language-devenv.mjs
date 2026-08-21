@@ -265,6 +265,7 @@ async function stageRustToolchain(lock, spec, devEnvRoot, cacheDir, inputs) {
 		env: { ...process.env, CARGO_HOME: cargoHome, RUSTUP_HOME: rustupHome },
 	});
 	await forceRustupHardlinks(join(cargoHome, 'bin'));
+	await aliasRustGnuStableToolchain(rustupHome, toolchain);
 	const rustc = join(cargoHome, 'bin', 'rustc.exe');
 	const version = runFile(rustc, ['--version', '--verbose'], {
 		env: { ...process.env, CARGO_HOME: cargoHome, RUSTUP_HOME: rustupHome, PATH: `${join(cargoHome, 'bin')};${join(devEnvRoot, 'MinGW', 'bin')};${process.env.PATH || ''}` },
@@ -272,6 +273,31 @@ async function stageRustToolchain(lock, spec, devEnvRoot, cacheDir, inputs) {
 	if (!version.includes('host: x86_64-pc-windows-gnu') || !version.includes(toolchain.split('-')[0])) {
 		throw new Error(`Unexpected rustc output:\n${version}`);
 	}
+	const listed = runFile(rustup, ['toolchain', 'list'], {
+		env: { ...process.env, CARGO_HOME: cargoHome, RUSTUP_HOME: rustupHome, PATH: join(cargoHome, 'bin') },
+	});
+	if (!listed.split(/\r?\n/).some(line => line.trim().split(/\s+/)[0] === 'stable-x86_64-pc-windows-gnu')) {
+		throw new Error(`rustup toolchain list missing stable-x86_64-pc-windows-gnu:\n${listed}`);
+	}
+}
+
+async function aliasRustGnuStableToolchain(rustupHome, toolchain) {
+	const aliasName = 'stable-x86_64-pc-windows-gnu';
+	if (toolchain === aliasName) {
+		return;
+	}
+	const toolchainsDir = join(rustupHome, 'toolchains');
+	const sourceDir = join(toolchainsDir, toolchain);
+	const aliasDir = join(toolchainsDir, aliasName);
+	if (!(await pathExists(sourceDir))) {
+		const names = await fs.readdir(toolchainsDir).catch(() => []);
+		throw new Error(`Rust toolchain directory missing: ${sourceDir} (found: ${names.join(', ')})`);
+	}
+	if (await pathExists(aliasDir)) {
+		return;
+	}
+	log(`alias ${aliasName} -> ${toolchain}`);
+	await fs.symlink(sourceDir, aliasDir, 'junction');
 }
 
 function runFile(file, args, options = {}) {

@@ -612,6 +612,9 @@ function hostEnvironment(pathValue, config) {
 	env.PACKAGED_DEVENV_INTEGRATION_CONFIG = JSON.stringify(config);
 	env.REMOTEPRO_INTEGRATION_TEST = '1';
 	env.VSCODE_CLI = '0';
+	env.DOTNET_ADD_GLOBAL_TOOLS_TO_PATH = '0';
+	env.DOTNET_CLI_TELEMETRY_OPTOUT = '1';
+	env.DOTNET_NOLOGO = '1';
 	return env;
 }
 
@@ -978,7 +981,15 @@ async function seedPortableSettings(appRoot) {
 	const userDir = path.join(appRoot, 'data', 'user-data', 'User');
 	await fs.mkdir(userDir, { recursive: true });
 	const settingsPath = path.join(userDir, 'settings.json');
+	let existing = {};
+	try {
+		existing = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+	} catch {
+		existing = {};
+	}
+	const mingwCpp = path.join(appRoot, 'dev-env', 'MinGW', 'bin', 'g++.exe');
 	const settings = {
+		...existing,
 		'extensions.autoCheckUpdates': false,
 		'extensions.autoUpdate': false,
 		'extensions.ignoreRecommendations': true,
@@ -989,8 +1000,16 @@ async function seedPortableSettings(appRoot) {
 		'telemetry.telemetryLevel': 'off',
 		'typescript.disableAutomaticTypeAcquisition': true,
 		'typescript.surveys.enabled': false,
-		'update.mode': 'none'
+		'update.mode': 'none',
+		'cmake.configureOnOpen': false,
+		'cmake.enableAutomaticKitScan': false,
+		'cmake.enabled': false
 	};
+	if (await pathExists(mingwCpp)) {
+		settings['C_Cpp.default.compilerPath'] = mingwCpp;
+		settings['C_Cpp.default.intelliSenseMode'] = 'windows-gcc-x64';
+		settings['C_Cpp.intelliSenseEngine'] = 'Tag Parser';
+	}
 	await fs.writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
 }
 
@@ -1210,7 +1229,9 @@ function normalizedTextContainsPath(text, root) {
 }
 
 async function scanExecutableNames(root, names, excludedRoots = []) {
-	const expected = new Set(names.flatMap(name => [name.toLowerCase(), `${name}.exe`.toLowerCase(), `${name}.cmd`.toLowerCase(), `${name}.bat`.toLowerCase()]));
+	const expected = new Set(names.flatMap(name => process.platform === 'win32'
+		? [`${name}.exe`.toLowerCase(), `${name}.cmd`.toLowerCase(), `${name}.bat`.toLowerCase()]
+		: [name.toLowerCase(), `${name}.exe`.toLowerCase()]));
 	const queue = [root];
 	const hits = [];
 	while (queue.length > 0) {
@@ -1488,11 +1509,8 @@ function assertConcurrencyIsolation(resultA, resultB, appRootA, appRootB) {
 		['B', resultB, appRootB, appRootA]
 	];
 	for (const [label, result, ownRoot, peerRoot] of checks) {
-		if (samePath(result.portable.dataRoot, resultA === resultB ? appRootB : appRootA)) {
+		if (!isUnder(ownRoot, result.portable.dataRoot) || !isUnder(ownRoot, result.portable.sharedDataRoot)) {
 			throw new Error(`Concurrency ${label} portable data root is not product-local`);
-		}
-		if (samePath(result.portable.sharedDataRoot, resultA === resultB ? resultA.portable.sharedDataRoot : resultB.portable.sharedDataRoot)) {
-			throw new Error('Concurrency portable shared-data roots collide');
 		}
 		for (const command of result.commands ?? []) {
 			if (!isUnder(ownRoot, command.path) || normalizedTextContainsPath(command.path, peerRoot)) {

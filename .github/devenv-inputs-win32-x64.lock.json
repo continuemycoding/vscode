@@ -417,7 +417,8 @@
 			],
 			"settings": {
 				"C_Cpp.intelliSenseEngine": "default",
-				"cmake.configureOnOpen": false
+				"cmake.configureOnOpen": false,
+				"cmake.enableAutomaticKitScan": false
 			}
 		},
 		"go": {
@@ -487,6 +488,7 @@
 				".cargo/bin/rustc.exe",
 				".cargo/bin/cargo.exe",
 				".cargo/bin/rustup.exe",
+				".rustup/toolchains/stable-x86_64-pc-windows-gnu/bin/rustc.exe",
 				"MinGW/bin/gcc.exe"
 			],
 			"settings": {
@@ -519,7 +521,8 @@
 				"DOTNET_CLI_TELEMETRY_OPTOUT": "1",
 				"DOTNET_NOLOGO": "1",
 				"DOTNET_GENERATE_ASPNET_CERTIFICATE": "false",
-				"DOTNET_SKIP_FIRST_TIME_EXPERIENCE": "1"
+				"DOTNET_SKIP_FIRST_TIME_EXPERIENCE": "1",
+				"DOTNET_ADD_GLOBAL_TOOLS_TO_PATH": "0"
 			},
 			"extraRequiredFiles": [
 				"dotnet/dotnet.exe",
