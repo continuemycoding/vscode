@@ -18,6 +18,7 @@ import { generateUuid } from '../../../../base/common/uuid.js';
 import { IMessagePassingProtocol } from '../../../../base/parts/ipc/common/ipc.js';
 import { BufferedEmitter } from '../../../../base/parts/ipc/common/ipc.net.js';
 import { acquirePort } from '../../../../base/parts/ipc/electron-browser/ipc.mp.js';
+import { process } from '../../../../base/parts/sandbox/electron-browser/globals.js';
 import * as nls from '../../../../nls.js';
 import { IExtensionHostDebugService } from '../../../../platform/debug/common/extensionHostDebug.js';
 import { extensionHostGraceTimeMs, IExtensionHostProcessOptions, IExtensionHostStarter } from '../../../../platform/extensions/common/extensionHostStarter.js';
@@ -242,9 +243,11 @@ export class NativeLocalProcessExtensionHost extends Disposable implements IExte
 		delete env['VSCODE_BUNDLED_DEV_ENV_ROOT'];
 		delete env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'];
 		if (this._productService.bundledDevEnvironment) {
+			// 渲染进程没有 Node 的 process；用 preload 暴露的主进程环境覆盖 shell PATH。
 			env['VSCODE_BUNDLED_DEV_ENV_ROOT'] = this._getBundledDevEnvironmentRoot();
-			if (typeof process.env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'] === 'string') {
-				env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'] = process.env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'];
+			const managedEnv = process.env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'];
+			if (typeof managedEnv === 'string') {
+				env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'] = managedEnv;
 			}
 			if (typeof process.env['PATH'] === 'string') {
 				env['PATH'] = process.env['PATH'];
