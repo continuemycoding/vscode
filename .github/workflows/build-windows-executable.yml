@@ -378,7 +378,7 @@ jobs:
     name: Verify ${{ matrix.language }} package
     needs: package
     runs-on: windows-2025
-    timeout-minutes: 80
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
@@ -419,10 +419,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Path 'evidence\verify\${{ matrix.language }}' -Force | Out-Null
-          node .github/scripts/run-packaged-devenv-integration.mjs --mode verify --language '${{ matrix.language }}' --zip 'packages\${{ matrix.language }}\VSCode-win32-x64-${{ matrix.language }}.zip' --evidence-dir 'evidence\verify\${{ matrix.language }}' --timeout 3600000
+          node .github/scripts/run-packaged-devenv-integration.mjs --mode verify --language '${{ matrix.language }}' --zip 'packages\${{ matrix.language }}\VSCode-win32-x64-${{ matrix.language }}.zip' --evidence-dir 'evidence\verify\${{ matrix.language }}' --timeout 900000
           if ($LASTEXITCODE -ne 0) { throw "Packaged verification failed: $LASTEXITCODE" }
         env:
-          PACKAGED_DEVENV_TEST_TIMEOUT_MS: 3600000
+          PACKAGED_DEVENV_TEST_TIMEOUT_MS: 900000
           PACKAGED_DEVENV_NETWORK_FIREWALL: 'true'
 
       - name: Upload verify evidence
@@ -439,7 +439,7 @@ jobs:
     name: Verify moved ${{ matrix.language }} package
     needs: package
     runs-on: windows-2025
-    timeout-minutes: 90
+    timeout-minutes: 70
     strategy:
       fail-fast: false
       matrix:
@@ -480,10 +480,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Path 'evidence\move\${{ matrix.language }}' -Force | Out-Null
-          node .github/scripts/run-packaged-devenv-integration.mjs --mode move --language '${{ matrix.language }}' --zip 'packages\${{ matrix.language }}\VSCode-win32-x64-${{ matrix.language }}.zip' --evidence-dir 'evidence\move\${{ matrix.language }}' --timeout 4200000
+          node .github/scripts/run-packaged-devenv-integration.mjs --mode move --language '${{ matrix.language }}' --zip 'packages\${{ matrix.language }}\VSCode-win32-x64-${{ matrix.language }}.zip' --evidence-dir 'evidence\move\${{ matrix.language }}' --timeout 900000
           if ($LASTEXITCODE -ne 0) { throw "Moved package verification failed: $LASTEXITCODE" }
         env:
-          PACKAGED_DEVENV_TEST_TIMEOUT_MS: 4200000
+          PACKAGED_DEVENV_TEST_TIMEOUT_MS: 900000
           PACKAGED_DEVENV_NETWORK_FIREWALL: 'true'
 
       - name: Upload move evidence
@@ -561,10 +561,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $evidence = 'evidence\replacement\${{ matrix.language_a }}-${{ matrix.language_b }}\preserve-false'
           New-Item -ItemType Directory -Path $evidence -Force | Out-Null
-          node .github/scripts/run-packaged-devenv-integration.mjs --mode replacement --pair '${{ matrix.pair }}' --preserve-data false --zip-a 'packages\${{ matrix.language_a }}\VSCode-win32-x64-${{ matrix.language_a }}.zip' --zip-b 'packages\${{ matrix.language_b }}\VSCode-win32-x64-${{ matrix.language_b }}.zip' --evidence-dir $evidence --timeout 5400000
+          node .github/scripts/run-packaged-devenv-integration.mjs --mode replacement --pair '${{ matrix.pair }}' --preserve-data false --zip-a 'packages\${{ matrix.language_a }}\VSCode-win32-x64-${{ matrix.language_a }}.zip' --zip-b 'packages\${{ matrix.language_b }}\VSCode-win32-x64-${{ matrix.language_b }}.zip' --evidence-dir $evidence --timeout 900000
           if ($LASTEXITCODE -ne 0) { throw "Fresh-data replacement failed: $LASTEXITCODE" }
         env:
-          PACKAGED_DEVENV_TEST_TIMEOUT_MS: 5400000
+          PACKAGED_DEVENV_TEST_TIMEOUT_MS: 900000
           PACKAGED_DEVENV_NETWORK_FIREWALL: 'true'
 
       - name: Verify replacement preserving data
@@ -573,10 +573,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $evidence = 'evidence\replacement\${{ matrix.language_a }}-${{ matrix.language_b }}\preserve-true'
           New-Item -ItemType Directory -Path $evidence -Force | Out-Null
-          node .github/scripts/run-packaged-devenv-integration.mjs --mode replacement --pair '${{ matrix.pair }}' --preserve-data true --zip-a 'packages\${{ matrix.language_a }}\VSCode-win32-x64-${{ matrix.language_a }}.zip' --zip-b 'packages\${{ matrix.language_b }}\VSCode-win32-x64-${{ matrix.language_b }}.zip' --evidence-dir $evidence --timeout 5400000
+          node .github/scripts/run-packaged-devenv-integration.mjs --mode replacement --pair '${{ matrix.pair }}' --preserve-data true --zip-a 'packages\${{ matrix.language_a }}\VSCode-win32-x64-${{ matrix.language_a }}.zip' --zip-b 'packages\${{ matrix.language_b }}\VSCode-win32-x64-${{ matrix.language_b }}.zip' --evidence-dir $evidence --timeout 900000
           if ($LASTEXITCODE -ne 0) { throw "Preserved-data replacement failed: $LASTEXITCODE" }
         env:
-          PACKAGED_DEVENV_TEST_TIMEOUT_MS: 5400000
+          PACKAGED_DEVENV_TEST_TIMEOUT_MS: 900000
           PACKAGED_DEVENV_NETWORK_FIREWALL: 'true'
 
       - name: Upload replacement evidence
@@ -593,7 +593,7 @@ jobs:
     name: Run ${{ matrix.pair }} concurrently
     needs: package
     runs-on: windows-2025
-    timeout-minutes: 100
+    timeout-minutes: 70
     strategy:
       fail-fast: false
       matrix:
@@ -654,10 +654,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $evidence = 'evidence\concurrency\${{ matrix.language_a }}-${{ matrix.language_b }}'
           New-Item -ItemType Directory -Path $evidence -Force | Out-Null
-          node .github/scripts/run-packaged-devenv-integration.mjs --mode concurrency --pair '${{ matrix.pair }}' --zip-a 'packages\${{ matrix.language_a }}\VSCode-win32-x64-${{ matrix.language_a }}.zip' --zip-b 'packages\${{ matrix.language_b }}\VSCode-win32-x64-${{ matrix.language_b }}.zip' --evidence-dir $evidence --timeout 4200000
+          node .github/scripts/run-packaged-devenv-integration.mjs --mode concurrency --pair '${{ matrix.pair }}' --zip-a 'packages\${{ matrix.language_a }}\VSCode-win32-x64-${{ matrix.language_a }}.zip' --zip-b 'packages\${{ matrix.language_b }}\VSCode-win32-x64-${{ matrix.language_b }}.zip' --evidence-dir $evidence --timeout 900000
           if ($LASTEXITCODE -ne 0) { throw "Concurrent isolation verification failed: $LASTEXITCODE" }
         env:
-          PACKAGED_DEVENV_TEST_TIMEOUT_MS: 4200000
+          PACKAGED_DEVENV_TEST_TIMEOUT_MS: 900000
           PACKAGED_DEVENV_NETWORK_FIREWALL: 'true'
 
       - name: Upload concurrency evidence

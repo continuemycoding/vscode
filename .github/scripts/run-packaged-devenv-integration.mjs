@@ -21,8 +21,9 @@ const LANGUAGES = new Set(['cpp', 'go', 'rust', 'csharp', 'javascript', 'typescr
 const MODES = new Set(['verify', 'move', 'replacement', 'concurrency']);
 const PAIRS = new Set(['cpp:python', 'rust:javascript', 'typescript:go', 'csharp:lua']);
 const BOOLEAN_VALUES = new Set(['true', 'false']);
-const DEFAULT_TIMEOUT_MS = 12 * 60_000;
+const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 const PHASE_TIMEOUT_MINIMUM_MS = 30_000;
+const HOST_HEARTBEAT_MS = 15_000;
 const REMOTEPRO_ID = 'remotepro-cn.remotepro';
 const REMOTEPRO_VERSION = '1.4.4';
 const FIREWALL_PREFIX = 'VSCode-Packaged-DevEnv-Integration';
@@ -605,10 +606,49 @@ function removeContaminatingEnvironment(env) {
 
 function hostEnvironment(pathValue, config) {
 	const env = removeContaminatingEnvironment(strictBaseEnvironment(pathValue));
+	env.ELECTRON_ENABLE_LOGGING = '1';
+	env.NO_PROXY = '*';
+	env.no_proxy = '*';
 	env.PACKAGED_DEVENV_INTEGRATION_CONFIG = JSON.stringify(config);
 	env.REMOTEPRO_INTEGRATION_TEST = '1';
 	env.VSCODE_CLI = '0';
 	return env;
+}
+
+function buildEditorLaunchArgs(options) {
+	const { evidenceDir, phase, projectDir, testExtensionEntry, testExtensionRoot } = options;
+	const logsPath = path.join(evidenceDir, 'logs', `vscode-${phase}`);
+	const crashesPath = path.join(evidenceDir, 'crashes', phase);
+	const args = [
+		'--disable-gpu',
+		'--disable-updates',
+		'--disable-telemetry',
+		'--disable-experiments',
+		'--disable-workspace-trust',
+		'--no-cached-data',
+		'--no-proxy-server',
+		'--use-inmemory-secretstorage',
+		'--new-window',
+		'--skip-release-notes',
+		'--skip-welcome',
+		`--crash-reporter-directory=${crashesPath}`,
+		`--logsPath=${logsPath}`,
+		`--extensionDevelopmentPath=${testExtensionRoot}`,
+		`--extensionTestsPath=${testExtensionEntry}`,
+		projectDir
+	];
+	if (args.some(argument => /--(?:user-data-dir|extensions-dir|shared-data-dir)(?:=|$)/.test(argument))) {
+		throw new Error('Portable integration must not pass profile directory CLI overrides');
+	}
+	return { args, crashesPath, logsPath };
+}
+
+async function copyPortableLogs(appRoot, evidenceDir, phase) {
+	const portableLogs = path.join(appRoot, 'data', 'user-data', 'logs');
+	if (!await pathExists(portableLogs)) {
+		return;
+	}
+	await fs.cp(portableLogs, path.join(evidenceDir, 'logs', `portable-${phase}`), { recursive: true }).catch(() => undefined);
 }
 
 async function registrySnapshot() {
@@ -745,7 +785,12 @@ class FirewallIsolation {
 	async assertAvailable() {
 		const probeName = `${FIREWALL_PREFIX}-Probe-${randomUUID()}`;
 		const whereExe = nativeLongPath(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe')).replace(/'/g, "''");
-		const add = await powershell(`New-NetFirewallRule -DisplayName '${probeName}' -Direction Outbound -Action Block -Program '${whereExe}' -Profile Domain,Private,Public -Enabled True -ErrorAction Stop | Out-Null`, {
+		const add = await powershell(`$ErrorActionPreference = 'Stop'
+try {
+  New-NetFirewallRule -DisplayName '${probeName}' -Direction Outbound -Action Block -Program '${whereExe}' -RemoteAddress Internet -Profile Domain,Private,Public -Enabled True -ErrorAction Stop | Out-Null
+} catch {
+  New-NetFirewallRule -DisplayName '${probeName}' -Direction Outbound -Action Block -Program '${whereExe}' -RemoteAddress @('0.0.0.0-126.255.255.255','128.0.0.0-255.255.255.255') -Profile Domain,Private,Public -Enabled True -ErrorAction Stop | Out-Null
+}`, {
 			allowFailure: true,
 			timeoutMs: 30_000
 		});
@@ -773,15 +818,20 @@ foreach ($exe in @($exes)) {
   $full = (Get-Item -LiteralPath $path).FullName
   $name = '${prefix}-' + [guid]::NewGuid().ToString('N')
   try {
-    New-NetFirewallRule -Name $name -DisplayName $name -Direction Outbound -Action Block -Program $full -Profile Domain,Private,Public -Enabled True -ErrorAction Stop | Out-Null
+    New-NetFirewallRule -Name $name -DisplayName $name -Direction Outbound -Action Block -Program $full -RemoteAddress Internet -Profile Domain,Private,Public -Enabled True -ErrorAction Stop | Out-Null
   } catch {
     $cimError = $_.Exception.Message
-    $add = & netsh @('advfirewall', 'firewall', 'add', 'rule', ('name=' + $name), 'dir=out', 'action=block', ('program=' + $full), 'enable=yes', 'profile=domain,private,public')
+    $add = & netsh @('advfirewall', 'firewall', 'add', 'rule', ('name=' + $name), 'dir=out', 'action=block', ('program=' + $full), 'remoteip=Internet', 'enable=yes', 'profile=domain,private,public')
     if ($LASTEXITCODE -ne 0) {
-      throw ('Firewall rule failed for ' + $full + ': ' + $cimError + '; netsh: ' + $add)
+      $ranges = @('0.0.0.0-126.255.255.255', '128.0.0.0-255.255.255.255')
+      try {
+        New-NetFirewallRule -Name $name -DisplayName $name -Direction Outbound -Action Block -Program $full -RemoteAddress $ranges -Profile Domain,Private,Public -Enabled True -ErrorAction Stop | Out-Null
+      } catch {
+        throw ('Firewall rule failed for ' + $full + ': ' + $cimError + '; netsh: ' + $add + '; ranges: ' + $_.Exception.Message)
+      }
     }
   }
-  $results.Add([ordered]@{ executable = $full; name = $name })
+  $results.Add([ordered]@{ executable = $full; name = $name; remote = 'Internet' })
 }
 $results | ConvertTo-Json -Depth 6 -Compress`, { timeoutMs: 180_000 });
 		const parsed = JSON.parse(result.stdout.trim() || '[]');
@@ -933,6 +983,7 @@ async function seedPortableSettings(appRoot) {
 		'extensions.autoCheckUpdates': false,
 		'extensions.autoUpdate': false,
 		'extensions.ignoreRecommendations': true,
+		'http.proxySupport': 'off',
 		'python.terminal.activateEnvironment': false,
 		'rust-analyzer.initializeStopped': true,
 		'telemetry.telemetryLevel': 'off',
@@ -960,16 +1011,38 @@ async function removeRebuildableCaches(appRoot) {
 
 async function runEditorPhase(options) {
 	const {
-		actor = 'single', appRoot, barrierDir, concurrencyHoldMs, evidenceDir, language, mode, phase, projectDir, runId, timeoutMs, peer
+		actor = 'single', appRoot, barrierDir, concurrencyHoldMs, evidenceDir, language, mode, phase, projectDir, runId, timeoutMs
 	} = options;
+	let { peer } = options;
 	await validateAppRoot(appRoot);
 	await ensureTestExtensionOutsidePackage(appRoot);
 	await seedPortableSettings(appRoot);
 	const code = path.join(appRoot, 'Code.exe');
 	const stateFile = path.join(evidenceDir, `state-${phase}.json`);
 	const logFile = path.join(evidenceDir, 'logs', `host-${phase}.log`);
+	const launch = buildEditorLaunchArgs({
+		evidenceDir,
+		phase,
+		projectDir,
+		testExtensionEntry: TEST_EXTENSION_ENTRY,
+		testExtensionRoot: TEST_EXTENSION_ROOT
+	});
+	await fs.mkdir(launch.logsPath, { recursive: true });
+	await fs.mkdir(launch.crashesPath, { recursive: true });
 	await fs.mkdir(path.dirname(logFile), { recursive: true });
 	await fs.rm(stateFile, { force: true });
+	if (peer) {
+		const peerLaunch = buildEditorLaunchArgs({
+			evidenceDir: peer.evidenceDir,
+			phase: 'concurrency',
+			projectDir: peer.projectDir,
+			testExtensionEntry: TEST_EXTENSION_ENTRY,
+			testExtensionRoot: TEST_EXTENSION_ROOT
+		});
+		await fs.mkdir(peerLaunch.logsPath, { recursive: true });
+		await fs.mkdir(peerLaunch.crashesPath, { recursive: true });
+		peer = { ...peer, launchArgs: peerLaunch.args };
+	}
 	const config = {
 		actor,
 		appRoot,
@@ -990,31 +1063,27 @@ async function runEditorPhase(options) {
 	};
 	const pathValue = systemPaths().join(path.delimiter);
 	const env = hostEnvironment(pathValue, config);
-	const args = [
-		'--disable-gpu',
-		'--disable-updates',
-		'--disable-workspace-trust',
-		'--new-window',
-		'--skip-release-notes',
-		'--skip-welcome',
-		`--extensionDevelopmentPath=${TEST_EXTENSION_ROOT}`,
-		`--extensionTestsPath=${TEST_EXTENSION_ENTRY}`,
-		projectDir
-	];
-	if (args.some(argument => /--(?:user-data-dir|extensions-dir|shared-data-dir)(?:=|$)/.test(argument))) {
-		throw new Error('Portable integration must not pass profile directory CLI overrides');
-	}
-	const child = spawn(code, args, { cwd: appRoot, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+	const child = spawn(code, launch.args, { cwd: appRoot, env, stdio: ['ignore', 'pipe', 'pipe'] });
 	if (!child.pid) {
 		throw new Error(`Failed to launch ${code}`);
 	}
 	let output = '';
-	const append = chunk => output += chunk.toString();
+	const append = chunk => {
+		const text = chunk.toString();
+		output += text;
+		process.stdout.write(text);
+	};
 	child.stdout.on('data', append);
 	child.stderr.on('data', append);
 	const started = Date.now();
+	let lastHeartbeat = started;
 	let launchError;
 	child.once('error', error => launchError = error);
+	console.log(`[packaged-devenv] launched Code.exe pid=${child.pid} phase=${phase} timeoutMs=${timeoutMs}`);
+	const persistHostLog = async () => {
+		await fs.writeFile(logFile, output, 'utf8');
+		await copyPortableLogs(appRoot, evidenceDir, phase);
+	};
 	try {
 		const expectedStage = phase === 'prepare' ? 'prepared' : 'complete';
 		const deadline = Date.now() + timeoutMs;
@@ -1027,7 +1096,7 @@ async function runEditorPhase(options) {
 				await writeProcessSnapshot(path.join(evidenceDir, 'processes', `${phase}-before-kill.json`), child.pid, { actor, appRoot, phase });
 				await killPidTree(child.pid);
 				await waitForTreeExit(child.pid);
-				await fs.writeFile(logFile, output, 'utf8');
+				await persistHostLog();
 				return { elapsedMs: Date.now() - started, pid: child.pid, state };
 			}
 			if (state.stage === 'failed') {
@@ -1036,12 +1105,17 @@ async function runEditorPhase(options) {
 			if (child.exitCode !== null) {
 				throw new Error(`Code.exe exited ${child.exitCode} before ${expectedStage}`);
 			}
+			if (Date.now() - lastHeartbeat >= HOST_HEARTBEAT_MS) {
+				lastHeartbeat = Date.now();
+				await fs.writeFile(logFile, output, 'utf8');
+				console.log(`[packaged-devenv] waiting for ${expectedStage} (${Math.round((Date.now() - started) / 1000)}s / ${Math.round(timeoutMs / 1000)}s)`);
+			}
 			await new Promise(resolve => setTimeout(resolve, 250));
 		}
 		throw new Error(`Code.exe phase ${phase} exceeded ${timeoutMs}ms`);
 	} catch (error) {
 		await writeProcessSnapshot(path.join(evidenceDir, 'processes', `${phase}-failure.json`), child.pid, { actor, appRoot, error: String(error), phase }).catch(() => undefined);
-		await fs.writeFile(logFile, output, 'utf8');
+		await persistHostLog().catch(() => undefined);
 		await killPidTree(child.pid);
 		throw error;
 	}

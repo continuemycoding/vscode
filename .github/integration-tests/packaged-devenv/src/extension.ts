@@ -34,6 +34,7 @@ interface PeerLaunchConfig {
 	evidenceDir: string;
 	executable: string;
 	language: Language;
+	launchArgs: string[];
 	projectDir: string;
 	runId: string;
 }
@@ -538,8 +539,12 @@ async function launchPeer(cfg: PackagedIntegrationConfig): Promise<void> {
 	assert.ok(cfg.testExtensionRoot && fs.existsSync(cfg.testExtensionRoot), 'test extension root is missing');
 	assert.ok(cfg.testExtensionEntry && fs.existsSync(cfg.testExtensionEntry), 'test extension entry is missing');
 	assert.ok(fs.existsSync(cfg.peer.executable), `peer Code.exe is missing: ${cfg.peer.executable}`);
+	assert.ok(Array.isArray(cfg.peer.launchArgs) && cfg.peer.launchArgs.length > 0, 'peer launch args missing');
 	const env = { ...process.env };
 	delete env.ELECTRON_RUN_AS_NODE;
+	env.ELECTRON_ENABLE_LOGGING = '1';
+	env.NO_PROXY = '*';
+	env.no_proxy = '*';
 	env.PACKAGED_DEVENV_INTEGRATION_CONFIG = JSON.stringify({
 		actor: 'b',
 		appRoot: cfg.peer.appRoot,
@@ -558,21 +563,10 @@ async function launchPeer(cfg: PackagedIntegrationConfig): Promise<void> {
 		timeoutMs: cfg.timeoutMs
 	});
 	env.REMOTEPRO_INTEGRATION_TEST = '1';
-	const args = [
-		'--disable-gpu',
-		'--disable-updates',
-		'--disable-workspace-trust',
-		'--new-window',
-		'--skip-release-notes',
-		'--skip-welcome',
-		`--extensionDevelopmentPath=${cfg.testExtensionRoot}`,
-		`--extensionTestsPath=${cfg.testExtensionEntry}`,
-		cfg.peer.projectDir
-	];
+	const args = cfg.peer.launchArgs;
 	const child = execFile(cfg.peer.executable, args, {
 		cwd: cfg.peer.appRoot,
-		env,
-		windowsHide: true
+		env
 	});
 	assert.ok(child.pid, 'failed to launch actor B');
 	writeJson(path.join(cfg.barrierDir!, 'peer-launch.json'), {
