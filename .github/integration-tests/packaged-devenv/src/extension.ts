@@ -225,7 +225,7 @@ function filteredEnvironment(): Record<string, string> {
 			continue;
 		}
 		if (/^(PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|TEMP|TMP|USERPROFILE|APPDATA|LOCALAPPDATA|PROGRAMDATA|PROGRAMFILES(?:\(X86\))?|COMMONPROGRAMFILES|NUMBER_OF_PROCESSORS|PROCESSOR_ARCHITECTURE|VSCODE_PORTABLE|PACKAGED_DEVENV_|CARGO_HOME|RUSTUP_HOME|DOTNET_ROOT|GOROOT)$/i.test(key)) {
-			output[key] = value;
+			output[key.toUpperCase() === 'PATH' ? 'PATH' : key] = value;
 		}
 	}
 	return output;

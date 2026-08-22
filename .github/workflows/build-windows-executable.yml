@@ -732,12 +732,12 @@ jobs:
           $resultRecords = [System.Collections.Generic.List[object]]::new()
           foreach ($file in $resultFiles) {
             try {
-              $json = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
-              $mode = [string]$json.mode
-              if (-not $mode -and $json.PSObject.Properties.Name -contains 'testMode') { $mode = [string]$json.testMode }
+              $json = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -AsHashtable
+              $mode = [string]$json['mode']
+              if (-not $mode) { $mode = [string]$json['testMode'] }
               if ($mode -in @('verify', 'move', 'replacement', 'concurrency')) {
-                $status = if ($json.PSObject.Properties.Name -contains 'status') { [string]$json.status } elseif ($json.PSObject.Properties.Name -contains 'success') { if ($json.success) { 'passed' } else { 'failed' } } else { '' }
-                $duration = if ($json.PSObject.Properties.Name -contains 'durationMs') { [long]$json.durationMs } else { 0 }
+                $status = if ($json.ContainsKey('status') -and $null -ne $json['status'] -and [string]$json['status'] -ne '') { [string]$json['status'] } elseif ($json.ContainsKey('success')) { if ($json['success']) { 'passed' } else { 'failed' } } else { '' }
+                $duration = if ($json.ContainsKey('durationMs') -and $null -ne $json['durationMs']) { [long]$json['durationMs'] } else { 0 }
                 $resultRecords.Add([pscustomobject]@{ Mode = $mode; Status = $status.ToLowerInvariant(); DurationMs = $duration; Path = $file.FullName })
               }
             } catch {
@@ -889,14 +889,14 @@ jobs:
           $testRecords = [System.Collections.Generic.List[object]]::new()
           foreach ($file in $evidenceJson) {
             try {
-              $json = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
-              $mode = if ($json.PSObject.Properties.Name -contains 'mode') { [string]$json.mode } elseif ($json.PSObject.Properties.Name -contains 'testMode') { [string]$json.testMode } else { '' }
+              $json = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -AsHashtable
+              $mode = if ($json.ContainsKey('mode') -and $json['mode']) { [string]$json['mode'] } elseif ($json.ContainsKey('testMode')) { [string]$json['testMode'] } else { '' }
               if ($mode -notin @('verify', 'move', 'replacement', 'concurrency')) { continue }
-              $status = if ($json.PSObject.Properties.Name -contains 'status') { [string]$json.status } elseif ($json.PSObject.Properties.Name -contains 'success') { if ($json.success) { 'passed' } else { 'failed' } } else { '' }
+              $status = if ($json.ContainsKey('status') -and $null -ne $json['status'] -and [string]$json['status'] -ne '') { [string]$json['status'] } elseif ($json.ContainsKey('success')) { if ($json['success']) { 'passed' } else { 'failed' } } else { '' }
               if ($status.ToLowerInvariant() -notin @('passed', 'pass', 'success', 'succeeded')) { throw "Evidence is not successful: $($file.FullName)" }
               $evidenceShas = [System.Collections.Generic.List[string]]::new()
               foreach ($property in @('zipSha256', 'zipSha', 'zipASha256', 'zipASha', 'zipBSha256', 'zipBSha')) {
-                if ($json.PSObject.Properties.Name -contains $property -and $json.$property) { $evidenceShas.Add(([string]$json.$property).ToLowerInvariant()) }
+                if ($json.ContainsKey($property) -and $json[$property]) { $evidenceShas.Add(([string]$json[$property]).ToLowerInvariant()) }
               }
               $relativeEvidencePath = $file.FullName.Substring($evidenceDir.Length + 1)
               $languagePattern = 'cpp|go|rust|csharp|javascript|typescript|python|lua'
@@ -914,7 +914,7 @@ jobs:
               if ($actualEvidenceShas.Count -ne $expectedEvidenceShas.Count -or @(Compare-Object $expectedEvidenceShas $actualEvidenceShas).Count -ne 0) {
                 throw "Evidence ZIP SHA mismatch in ${relativeEvidencePath}: expected $($expectedEvidenceShas -join ','), got $($actualEvidenceShas -join ',')"
               }
-              $testRecords.Add([pscustomobject]@{ mode = $mode; status = $status; durationMs = $(if ($json.PSObject.Properties.Name -contains 'durationMs') { [long]$json.durationMs } else { 0 }); file = $relativeEvidencePath; zipSha256 = @($actualEvidenceShas) })
+              $testRecords.Add([pscustomobject]@{ mode = $mode; status = $status; durationMs = $(if ($json.ContainsKey('durationMs') -and $null -ne $json['durationMs']) { [long]$json['durationMs'] } else { 0 }); file = $relativeEvidencePath; zipSha256 = @($actualEvidenceShas) })
             } catch {
               throw "Invalid release evidence $($file.FullName): $_"
             }

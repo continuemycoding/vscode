@@ -415,9 +415,10 @@ export class NativeLocalProcessExtensionHost extends Disposable implements IExte
 					const payload = parsed as { env?: unknown; path?: unknown };
 					if (payload.env && typeof payload.env === 'object') {
 						for (const [name, value] of Object.entries(payload.env as Record<string, unknown>)) {
-							if (typeof value === 'string') {
-								env[name] = value;
+							if (typeof value !== 'string' || /^(PATH)$/i.test(name)) {
+								continue;
 							}
+							env[name] = value;
 						}
 					}
 					if (Array.isArray(payload.path)) {
@@ -465,9 +466,6 @@ export class NativeLocalProcessExtensionHost extends Disposable implements IExte
 		const filteredPath = this._bundledDevEnvironmentPath(root, pathEntries);
 		if (filteredPath) {
 			env['PATH'] = filteredPath;
-			if (platform.isWindows) {
-				env['Path'] = filteredPath;
-			}
 		}
 	}
 

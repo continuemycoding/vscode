@@ -590,7 +590,8 @@ function strictBaseEnvironment(pathValue) {
 		}
 		output[key] = value;
 	}
-	output.Path = pathValue;
+	delete output.Path;
+	delete output.PATH;
 	output.PATH = pathValue;
 	return output;
 }
@@ -950,7 +951,7 @@ async function runTypeScriptInstall(appRoot, projectDir, evidenceDir, timeoutMs)
 	const packageLock = path.join(projectDir, 'package-lock.json');
 	await runProcess(node, [npmCli, 'install', '--ignore-scripts'], {
 		cwd: projectDir,
-		env: { ...strictBaseEnvironment(systemPaths().join(path.delimiter)), PATH: `${path.dirname(node)}${path.delimiter}${systemPaths().join(path.delimiter)}`, Path: `${path.dirname(node)}${path.delimiter}${systemPaths().join(path.delimiter)}` },
+		env: { ...strictBaseEnvironment(systemPaths().join(path.delimiter)), PATH: `${path.dirname(node)}${path.delimiter}${systemPaths().join(path.delimiter)}` },
 		timeoutMs
 	});
 	await ensureFile(packageLock, 'TypeScript project package-lock.json');
