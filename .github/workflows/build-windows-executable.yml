@@ -826,7 +826,7 @@ jobs:
   release:
     name: Release verified Windows packages
     needs: summarize
-    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && needs.summarize.result == 'success'
+    if: github.event_name == 'push' && needs.summarize.result == 'success'
     runs-on: windows-2025
     timeout-minutes: 35
     permissions:
