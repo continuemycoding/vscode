@@ -9,6 +9,7 @@ import { IProcessEnvironment } from '../common/platform.js';
 
 export const BUNDLED_DEV_ENVIRONMENT_ROOT = 'VSCODE_BUNDLED_DEV_ENV_ROOT';
 export const BUNDLED_DEV_ENVIRONMENT_MANAGED_ENV = 'VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV';
+export const BUNDLED_DEV_ENVIRONMENT_VALUES = 'VSCODE_BUNDLED_DEV_ENV_VALUES';
 
 const MAX_MANIFEST_SIZE = 1024 * 1024;
 const ENVIRONMENT_VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -211,6 +212,10 @@ export function createBundledDevEnvironmentEnvironment(environment: IProcessEnvi
 	setEnvironmentVariable(result, 'VSCODE_PORTABLE', configuration.dataRoot, windows);
 	setEnvironmentVariable(result, BUNDLED_DEV_ENVIRONMENT_ROOT, configuration.productRoot, windows);
 	setEnvironmentVariable(result, BUNDLED_DEV_ENVIRONMENT_MANAGED_ENV, JSON.stringify(configuration.managedEnvironmentVariableNames), windows);
+	setEnvironmentVariable(result, BUNDLED_DEV_ENVIRONMENT_VALUES, JSON.stringify({
+		env: { ...configuration.environment, ...configuration.literalEnvironment },
+		path: [...configuration.pathEntries],
+	}), windows);
 
 	return result;
 }

@@ -7,7 +7,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import { tmpdir } from 'os';
 import * as path from '../../common/path.js';
-import { BUNDLED_DEV_ENVIRONMENT_MANAGED_ENV, BUNDLED_DEV_ENVIRONMENT_ROOT, createBundledDevEnvironmentEnvironment, loadBundledDevEnvironmentConfiguration, parseBundledDevEnvironmentManifest, resolveBundledDevEnvironmentManifest } from '../../node/bundledDevEnvironment.js';
+import { BUNDLED_DEV_ENVIRONMENT_MANAGED_ENV, BUNDLED_DEV_ENVIRONMENT_ROOT, BUNDLED_DEV_ENVIRONMENT_VALUES, createBundledDevEnvironmentEnvironment, loadBundledDevEnvironmentConfiguration, parseBundledDevEnvironmentManifest, resolveBundledDevEnvironmentManifest } from '../../node/bundledDevEnvironment.js';
 import { Promises } from '../../node/pfs.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../common/utils.js';
 import { getRandomTestPath } from './testUtils.js';
@@ -127,6 +127,14 @@ suite('Bundled Development Environment', () => {
 			VSCODE_PORTABLE: 'C:\\Apps\\B\\data',
 			[BUNDLED_DEV_ENVIRONMENT_ROOT]: rootB,
 			[BUNDLED_DEV_ENVIRONMENT_MANAGED_ENV]: '["CARGO_HOME","NUGET_PACKAGES","GOTOOLCHAIN"]',
+			[BUNDLED_DEV_ENVIRONMENT_VALUES]: JSON.stringify({
+				env: {
+					CARGO_HOME: 'C:\\Apps\\B\\dev-env\\.cargo',
+					NUGET_PACKAGES: 'C:\\Apps\\B\\data\\dev-env-state\\nuget',
+					GOTOOLCHAIN: 'local',
+				},
+				path: ['C:\\Apps\\B\\dev-env\\bin'],
+			}),
 		});
 	});
 

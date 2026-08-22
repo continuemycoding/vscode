@@ -279,6 +279,7 @@ async function stageRustToolchain(lock, spec, devEnvRoot, cacheDir, inputs) {
 	if (!listed.split(/\r?\n/).some(line => line.trim().split(/\s+/)[0] === 'stable-x86_64-pc-windows-gnu')) {
 		throw new Error(`rustup toolchain list missing stable-x86_64-pc-windows-gnu:\n${listed}`);
 	}
+	await prefetchRustCrates(devEnvRoot, cargoHome, rustupHome);
 }
 
 async function aliasRustGnuStableToolchain(rustupHome, toolchain) {
@@ -314,6 +315,39 @@ async function setRustupDefaultToolchain(rustupHome, toolchainName) {
 		text = `default_toolchain = "${toolchainName}"\n${text}`;
 	}
 	await fs.writeFile(settingsPath, text, 'utf8');
+}
+
+async function prefetchRustCrates(devEnvRoot, cargoHome, rustupHome) {
+	const workspace = join(devEnvRoot, '.crate-prefetch');
+	const srcDir = join(workspace, 'src');
+	await ensureDir(srcDir);
+	await fs.writeFile(join(workspace, 'Cargo.toml'), `[package]
+name = "prefetch"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde_json = "1"
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+`);
+	await fs.writeFile(join(srcDir, 'lib.rs'), '');
+	const cargo = join(cargoHome, 'bin', 'cargo.exe');
+	const rustEnv = {
+		...process.env,
+		CARGO_HOME: cargoHome,
+		RUSTUP_HOME: rustupHome,
+		PATH: `${join(cargoHome, 'bin')};${join(devEnvRoot, 'MinGW', 'bin')};${process.env.PATH || ''}`,
+	};
+	log('cargo fetch serde_json + reqwest into packaged CARGO_HOME');
+	runChecked(cargo, ['+stable-x86_64-pc-windows-gnu', 'fetch'], {
+		cwd: workspace,
+		env: rustEnv,
+		timeout: 15 * 60 * 1000,
+	});
+	await fs.rm(workspace, { recursive: true, force: true });
+	if (!(await pathExists(join(cargoHome, 'registry', 'cache')))) {
+		throw new Error('cargo fetch did not populate CARGO_HOME/registry/cache');
+	}
 }
 
 function runFile(file, args, options = {}) {

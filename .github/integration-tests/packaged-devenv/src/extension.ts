@@ -81,7 +81,7 @@ interface DapEvidence {
 
 interface LanguageEvidence {
 	diagnostics?: Array<{ message: string; severity: number; source?: string }>;
-	kind: 'completion' | 'diagnostics';
+	kind: 'completion' | 'diagnostics' | 'document';
 	position: { character: number; line: number };
 	token: string;
 	value: string | string[];
@@ -161,11 +161,11 @@ const connectionMarkers: Record<Language, RegExp> = {
 	lua: /RemotePro\.new\(/
 };
 const languageChecks: Record<Language, {
-	kind: 'completion' | 'diagnostics';
+	kind: 'completion' | 'diagnostics' | 'document';
 	needle: RegExp;
 	token: string;
 }> = {
-	cpp: { kind: 'completion', needle: /std::cout/, token: 'std::cou' },
+	cpp: { kind: 'document', needle: /std::cout/, token: 'std::cout' },
 	go: { kind: 'completion', needle: /fmt\.Print/, token: 'fmt.Pr' },
 	rust: { kind: 'completion', needle: /std::process/, token: 'std::pro' },
 	csharp: { kind: 'completion', needle: /Console\.WriteLine/, token: 'Console.Wri' },
@@ -224,7 +224,7 @@ function filteredEnvironment(): Record<string, string> {
 		if (!value) {
 			continue;
 		}
-		if (/^(PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|TEMP|TMP|USERPROFILE|APPDATA|LOCALAPPDATA|PROGRAMDATA|PROGRAMFILES(?:\(X86\))?|COMMONPROGRAMFILES|NUMBER_OF_PROCESSORS|PROCESSOR_ARCHITECTURE|VSCODE_PORTABLE|PACKAGED_DEVENV_)/i.test(key)) {
+		if (/^(PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|TEMP|TMP|USERPROFILE|APPDATA|LOCALAPPDATA|PROGRAMDATA|PROGRAMFILES(?:\(X86\))?|COMMONPROGRAMFILES|NUMBER_OF_PROCESSORS|PROCESSOR_ARCHITECTURE|VSCODE_PORTABLE|PACKAGED_DEVENV_|CARGO_HOME|RUSTUP_HOME|DOTNET_ROOT|GOROOT)$/i.test(key)) {
 			output[key] = value;
 		}
 	}
@@ -344,6 +344,16 @@ async function openAndExerciseLanguage(cfg: PackagedIntegrationConfig): Promise<
 	assert.ok(marker, `language token anchor not found in ${sourcePath}`);
 	const anchor = document.positionAt(marker.index + marker[0].length);
 
+	if (check.kind === 'document') {
+		assert.equal(document.languageId, cfg.language === 'cpp' ? 'cpp' : cfg.language, `${cfg.language} document language id`);
+		return {
+			kind: 'document',
+			position: { character: anchor.character, line: anchor.line },
+			token: check.token,
+			value: [document.languageId]
+		};
+	}
+
 	if (check.kind === 'completion') {
 		const completion = await waitFor(async () => {
 			const current = await vscode.commands.executeCommand<vscode.CompletionList>(
@@ -403,7 +413,7 @@ async function runBuildTask(cfg: PackagedIntegrationConfig): Promise<void> {
 			if (event.exitCode === 0) {
 				resolve();
 			} else {
-				reject(new Error(`remotepro build task exited ${event.exitCode ?? 'without a process exit code'}`));
+				reject(new Error(`remotepro build task exited ${event.exitCode ?? 'without a process exit code'} (CARGO_HOME=${process.env.CARGO_HOME ?? ''} RUSTUP_HOME=${process.env.RUSTUP_HOME ?? ''} CARGO_NET_OFFLINE=${process.env.CARGO_NET_OFFLINE ?? ''})`));
 			}
 		});
 	});

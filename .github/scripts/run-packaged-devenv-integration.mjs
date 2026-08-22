@@ -615,6 +615,7 @@ function hostEnvironment(pathValue, config) {
 	env.DOTNET_ADD_GLOBAL_TOOLS_TO_PATH = '0';
 	env.DOTNET_CLI_TELEMETRY_OPTOUT = '1';
 	env.DOTNET_NOLOGO = '1';
+	env.CARGO_NET_OFFLINE = 'true';
 	return env;
 }
 

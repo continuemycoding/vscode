@@ -396,6 +396,7 @@ export class NativeLocalProcessExtensionHost extends Disposable implements IExte
 	private _applyBundledDevEnvironmentOverride(env: { [key: string]: string | undefined }): void {
 		delete env['VSCODE_BUNDLED_DEV_ENV_ROOT'];
 		delete env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'];
+		delete env['VSCODE_BUNDLED_DEV_ENV_VALUES'];
 		if (!this._productService.bundledDevEnvironment) {
 			return;
 		}
@@ -403,6 +404,30 @@ export class NativeLocalProcessExtensionHost extends Disposable implements IExte
 		const root = this._getBundledDevEnvironmentRoot();
 		const ignoreCase = platform.isWindows;
 		env['VSCODE_BUNDLED_DEV_ENV_ROOT'] = root;
+
+		let pathEntries: string[] = [];
+		const valuesRaw = process.env['VSCODE_BUNDLED_DEV_ENV_VALUES'];
+		if (typeof valuesRaw === 'string') {
+			env['VSCODE_BUNDLED_DEV_ENV_VALUES'] = valuesRaw;
+			try {
+				const parsed: unknown = JSON.parse(valuesRaw);
+				if (parsed && typeof parsed === 'object') {
+					const payload = parsed as { env?: unknown; path?: unknown };
+					if (payload.env && typeof payload.env === 'object') {
+						for (const [name, value] of Object.entries(payload.env as Record<string, unknown>)) {
+							if (typeof value === 'string') {
+								env[name] = value;
+							}
+						}
+					}
+					if (Array.isArray(payload.path)) {
+						pathEntries = payload.path.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0);
+					}
+				}
+			} catch {
+				// 主进程注入的清单损坏时仍继续启动扩展宿主
+			}
+		}
 
 		const managedEnv = process.env['VSCODE_BUNDLED_DEV_ENV_MANAGED_ENV'];
 		if (typeof managedEnv === 'string') {
@@ -431,10 +456,13 @@ export class NativeLocalProcessExtensionHost extends Disposable implements IExte
 		}
 
 		env['DOTNET_ADD_GLOBAL_TOOLS_TO_PATH'] = process.env['DOTNET_ADD_GLOBAL_TOOLS_TO_PATH'] ?? '0';
+		if (typeof process.env['CARGO_NET_OFFLINE'] === 'string') {
+			env['CARGO_NET_OFFLINE'] = process.env['CARGO_NET_OFFLINE'];
+		}
 
 		delete env['PATH'];
 		delete env['Path'];
-		const filteredPath = this._bundledDevEnvironmentPath(root);
+		const filteredPath = this._bundledDevEnvironmentPath(root, pathEntries);
 		if (filteredPath) {
 			env['PATH'] = filteredPath;
 			if (platform.isWindows) {
@@ -443,34 +471,39 @@ export class NativeLocalProcessExtensionHost extends Disposable implements IExte
 		}
 	}
 
-	private _bundledDevEnvironmentPath(root: string): string | undefined {
-		const raw = process.env['PATH'] ?? process.env['Path'];
-		if (typeof raw !== 'string') {
-			return undefined;
-		}
+	private _bundledDevEnvironmentPath(root: string, pathEntries: readonly string[]): string | undefined {
+		const raw = process.env['PATH'] ?? process.env['Path'] ?? '';
 		const delimiter = platform.isWindows ? ';' : ':';
 		const ignoreCase = platform.isWindows;
 		const systemRoot = process.env['SystemRoot'] || process.env['windir'] || '';
 		const bundled: string[] = [];
 		const system: string[] = [];
 		const seen = new Set<string>();
+		const remember = (entry: string, bucket: string[]) => {
+			const key = ignoreCase ? entry.toLowerCase() : entry;
+			if (!entry || seen.has(key)) {
+				return;
+			}
+			seen.add(key);
+			bucket.push(entry);
+		};
+		for (const entry of pathEntries) {
+			remember(entry, bundled);
+		}
 		for (const entry of raw.split(delimiter)) {
 			if (!entry) {
 				continue;
 			}
-			const key = ignoreCase ? entry.toLowerCase() : entry;
-			if (seen.has(key)) {
-				continue;
-			}
 			if (isEqualOrParent(entry, root, ignoreCase)) {
-				seen.add(key);
-				bundled.push(entry);
+				remember(entry, bundled);
 				continue;
 			}
 			if (systemRoot && isEqualOrParent(entry, systemRoot, ignoreCase)) {
-				seen.add(key);
-				system.push(entry);
+				remember(entry, system);
 			}
+		}
+		if (bundled.length === 0 && system.length === 0) {
+			return undefined;
 		}
 		return [...bundled, ...system].join(delimiter);
 	}
