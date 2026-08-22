@@ -1031,6 +1031,12 @@ async function removeRebuildableCaches(appRoot) {
 	}
 }
 
+async function removeProjectBuildArtifacts(projectDir) {
+	for (const relative of ['build', 'target', 'bin', 'obj', 'out']) {
+		await fs.rm(path.join(projectDir, relative), { recursive: true, force: true });
+	}
+}
+
 async function runEditorPhase(options) {
 	const {
 		actor = 'single', appRoot, barrierDir, concurrencyHoldMs, evidenceDir, language, mode, phase, projectDir, runId, timeoutMs
@@ -1325,6 +1331,7 @@ async function runMoveMode(args, setup, context) {
 	const appRootY = path.join(setup.runRoot, 'moved', path.basename(appRootX));
 	await moveDirectory(appRootX, appRootY);
 	await removeRebuildableCaches(appRootY);
+	await removeProjectBuildArtifacts(projectDir);
 	context.firewallRoots = [appRootY];
 	if (args.offline) {
 		await context.firewall.block(context.firewallRoots);
