@@ -283,9 +283,6 @@ async function stageRustToolchain(lock, spec, devEnvRoot, cacheDir, inputs) {
 
 async function aliasRustGnuStableToolchain(rustupHome, toolchain) {
 	const aliasName = 'stable-x86_64-pc-windows-gnu';
-	if (toolchain === aliasName) {
-		return;
-	}
 	const toolchainsDir = join(rustupHome, 'toolchains');
 	const sourceDir = join(toolchainsDir, toolchain);
 	const aliasDir = join(toolchainsDir, aliasName);
@@ -293,11 +290,30 @@ async function aliasRustGnuStableToolchain(rustupHome, toolchain) {
 		const names = await fs.readdir(toolchainsDir).catch(() => []);
 		throw new Error(`Rust toolchain directory missing: ${sourceDir} (found: ${names.join(', ')})`);
 	}
-	if (await pathExists(aliasDir)) {
-		return;
+	if (toolchain !== aliasName) {
+		if (await pathExists(aliasDir)) {
+			await fs.rm(aliasDir, { recursive: true, force: true });
+		}
+		// 远控Pro 按目录名认 stable-x86_64-pc-windows-gnu。junction 是绝对路径，
+		// 打包 Move-Item / 7z 之后会失效，所以把已钉死的工具链目录改名，而不是做链接。
+		log(`rename toolchain ${toolchain} -> ${aliasName}`);
+		await fs.rename(sourceDir, aliasDir);
 	}
-	log(`alias ${aliasName} -> ${toolchain}`);
-	await fs.symlink(sourceDir, aliasDir, 'junction');
+	await setRustupDefaultToolchain(rustupHome, aliasName);
+}
+
+async function setRustupDefaultToolchain(rustupHome, toolchainName) {
+	const settingsPath = join(rustupHome, 'settings.toml');
+	let text = '';
+	if (await pathExists(settingsPath)) {
+		text = await fs.readFile(settingsPath, 'utf8');
+	}
+	if (/^default_toolchain\s*=/m.test(text)) {
+		text = text.replace(/^default_toolchain\s*=.*$/m, `default_toolchain = "${toolchainName}"`);
+	} else {
+		text = `default_toolchain = "${toolchainName}"\n${text}`;
+	}
+	await fs.writeFile(settingsPath, text, 'utf8');
 }
 
 function runFile(file, args, options = {}) {
